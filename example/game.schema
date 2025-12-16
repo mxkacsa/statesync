@@ -1,0 +1,29 @@
+// Game state schema definition
+// Use schemagen to generate Go and TypeScript code
+
+package main
+
+// Player represents a player in the game
+@id(2)
+type Player {
+    ID      string
+    Name    string
+    Score   int64
+    Hand    []int32    @view(owner)    // Only visible to the player themselves
+    Ready   bool
+}
+
+// GameState is the main game state
+@id(1)
+type GameState {
+    Round       int32
+    Phase       string
+    Players     []Player    @key(ID)
+    Scores      map[string]int64
+    SecretSeed  int64       @view(admin)   // Only visible to admins
+}
+
+// Views define who can see what
+view all {}                      // Everyone sees fields without @view
+view admin { includes: all }     // Admins see everything including @view(admin)
+view owner { includes: all }     // Owners see their own @view(owner) fields
