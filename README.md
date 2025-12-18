@@ -52,7 +52,8 @@ Deterministic state synchronization for Go with high-performance binary encoding
 - **Pipeline hooks** - Intercept broadcast pipeline for logging, debugging, modification
 - **Reconnection support** - History buffer for seamless client reconnection
 - **Debounced broadcasts** - Batch rapid updates efficiently
-- **Code generation** - `schemagen`, `trackgen` tools
+- **Code generation** - `schemagen`, `trackgen`, `logicgen` tools
+- **Node-based logic** - Visual scripting for server logic with `logicgen`
 - **Fast** - ~20 byte patches vs ~200 byte JSON, sub-microsecond encoding
 
 ## Install
@@ -247,6 +248,80 @@ Generated code includes:
 - `ShallowClone()` - Efficient cloning (only slices/maps are copied)
 - `FilterFor(ctx)` - Returns filtered copy based on visibility rules
 - `FilterPlayerSliceFor(items, ctx)` - Filters entire slice
+
+### logicgen - Node-Based Logic Generator
+
+Generate server logic from visual node graphs (build-time visual scripting):
+
+```bash
+go install github.com/mxkacsa/statesync/cmd/logicgen@latest
+```
+
+Create a node graph JSON file:
+
+```json
+{
+  "version": "1.0",
+  "package": "main",
+  "handlers": [
+    {
+      "name": "OnCardPlayed",
+      "event": "CardPlayed",
+      "parameters": [
+        {"name": "playerID", "type": "string"},
+        {"name": "cardID", "type": "int32"}
+      ],
+      "nodes": [
+        {
+          "id": "getPlayer",
+          "type": "GetPlayer",
+          "inputs": {"playerID": "param:playerID"},
+          "outputs": {"player": "player"}
+        },
+        {
+          "id": "addPoints",
+          "type": "Add",
+          "inputs": {
+            "a": "node:getPlayer:player.Score",
+            "b": 10
+          },
+          "outputs": {"result": "newScore"}
+        },
+        {
+          "id": "notify",
+          "type": "EmitToAll",
+          "inputs": {
+            "eventType": {"constant": "ScoreUpdated"},
+            "payload": {"score": "node:addPoints:newScore"}
+          }
+        }
+      ],
+      "flow": [
+        {"from": "start", "to": "getPlayer"},
+        {"from": "getPlayer", "to": "addPoints"},
+        {"from": "addPoints", "to": "notify"}
+      ]
+    }
+  ]
+}
+```
+
+Generate Go code:
+
+```bash
+logicgen -input=game_logic.json -output=game_logic_gen.go
+```
+
+Node types include:
+- **State Access**: GetField, SetField, GetPlayer
+- **Array Operations**: AddToArray, RemoveFromArray, FilterArray, MapArray
+- **Map Operations**: SetMapValue, GetMapValue, RemoveMapKey, FilterMap
+- **Logic**: Compare, And, Or, Not, If, Switch
+- **Math**: Add, Subtract, Multiply, Divide, Min, Max
+- **Events**: EmitToAll, EmitToPlayer, EmitExcept
+- **Control Flow**: ForEach, While, Break, Continue
+
+See [cmd/logicgen/README.md](cmd/logicgen/README.md) for complete documentation.
 
 ## Visibility System
 
@@ -468,6 +543,7 @@ persist.go         - Save/load
 
 cmd/schemagen/     - Schema code generator
 cmd/trackgen/      - Trackable code generator
+cmd/logicgen/      - Node-based logic code generator
 ```
 
 ## License

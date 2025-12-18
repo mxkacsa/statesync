@@ -1,0 +1,222 @@
+{
+  "version": "1.0",
+  "package": "main",
+  "imports": [],
+  "handlers": [
+    {
+      "name": "OnCardPlayed",
+      "event": "CardPlayed",
+      "parameters": [
+        {"name": "playerID", "type": "string"},
+        {"name": "cardID", "type": "int32"}
+      ],
+      "nodes": [
+        {
+          "id": "getPlayer",
+          "type": "GetPlayer",
+          "inputs": {
+            "playerID": "param:playerID"
+          },
+          "outputs": {
+            "player": "player"
+          }
+        },
+        {
+          "id": "checkCardInHand",
+          "type": "Compare",
+          "inputs": {
+            "left": "node:getPlayer:player.Hand",
+            "op": "contains",
+            "right": "param:cardID"
+          },
+          "outputs": {
+            "result": "hasCard"
+          }
+        },
+        {
+          "id": "removeCard",
+          "type": "RemoveFromArray",
+          "inputs": {
+            "array": "node:getPlayer:player.Hand",
+            "index": "param:cardID"
+          },
+          "outputs": {
+            "result": "updatedHand"
+          }
+        },
+        {
+          "id": "updatePlayerHand",
+          "type": "SetField",
+          "inputs": {
+            "path": "player.Hand",
+            "value": "node:removeCard:updatedHand"
+          },
+          "outputs": {}
+        },
+        {
+          "id": "incrementScore",
+          "type": "Add",
+          "inputs": {
+            "a": "node:getPlayer:player.Score",
+            "b": 10
+          },
+          "outputs": {
+            "result": "newScore"
+          }
+        },
+        {
+          "id": "updateScore",
+          "type": "SetField",
+          "inputs": {
+            "path": "player.Score",
+            "value": "node:incrementScore:newScore"
+          },
+          "outputs": {}
+        },
+        {
+          "id": "notifyAll",
+          "type": "EmitToAll",
+          "inputs": {
+            "eventType": "CardPlayedEvent",
+            "payload": {
+              "playerID": "param:playerID",
+              "cardID": "param:cardID"
+            }
+          },
+          "outputs": {}
+        }
+      ],
+      "flow": [
+        {"from": "start", "to": "getPlayer"},
+        {"from": "getPlayer", "to": "checkCardInHand"},
+        {"from": "checkCardInHand", "to": "removeCard"},
+        {"from": "removeCard", "to": "updatePlayerHand"},
+        {"from": "updatePlayerHand", "to": "incrementScore"},
+        {"from": "incrementScore", "to": "updateScore"},
+        {"from": "updateScore", "to": "notifyAll"}
+      ]
+    },
+    {
+      "name": "OnPlayerJoin",
+      "event": "PlayerJoin",
+      "parameters": [
+        {"name": "playerID", "type": "string"},
+        {"name": "playerName", "type": "string"}
+      ],
+      "nodes": [
+        {
+          "id": "createPlayer",
+          "type": "Constant",
+          "inputs": {
+            "value": {
+              "ID": "param:playerID",
+              "Name": "param:playerName",
+              "Score": 0,
+              "Hand": []
+            }
+          },
+          "outputs": {
+            "value": "newPlayer"
+          }
+        },
+        {
+          "id": "addToPlayers",
+          "type": "AddToArray",
+          "inputs": {
+            "array": "state:Players",
+            "element": "node:createPlayer:newPlayer"
+          },
+          "outputs": {
+            "result": "updatedPlayers"
+          }
+        },
+        {
+          "id": "updatePlayers",
+          "type": "SetField",
+          "inputs": {
+            "path": "GameState.Players",
+            "value": "node:addToPlayers:updatedPlayers"
+          },
+          "outputs": {}
+        },
+        {
+          "id": "notifyJoin",
+          "type": "EmitToAll",
+          "inputs": {
+            "eventType": "PlayerJoinedEvent",
+            "payload": {
+              "playerID": "param:playerID",
+              "playerName": "param:playerName"
+            }
+          },
+          "outputs": {}
+        }
+      ],
+      "flow": [
+        {"from": "start", "to": "createPlayer"},
+        {"from": "createPlayer", "to": "addToPlayers"},
+        {"from": "addToPlayers", "to": "updatePlayers"},
+        {"from": "updatePlayers", "to": "notifyJoin"}
+      ]
+    },
+    {
+      "name": "OnFilterPlayers",
+      "event": "FilterPlayers",
+      "parameters": [
+        {"name": "minScore", "type": "int64"}
+      ],
+      "nodes": [
+        {
+          "id": "getPlayers",
+          "type": "GetField",
+          "inputs": {
+            "path": "GameState.Players"
+          },
+          "outputs": {
+            "value": "allPlayers"
+          }
+        },
+        {
+          "id": "scoreCheck",
+          "type": "Compare",
+          "inputs": {
+            "left": "foreach:item.Score",
+            "op": ">=",
+            "right": "param:minScore"
+          },
+          "outputs": {
+            "result": "scoreFilter"
+          }
+        },
+        {
+          "id": "filterHighScore",
+          "type": "FilterArray",
+          "inputs": {
+            "array": "node:getPlayers:allPlayers",
+            "predicate": "node:scoreCheck:scoreFilter"
+          },
+          "outputs": {
+            "result": "filteredPlayers"
+          }
+        },
+        {
+          "id": "notifyFiltered",
+          "type": "EmitToAll",
+          "inputs": {
+            "eventType": "FilteredPlayersEvent",
+            "payload": {
+              "players": "node:filterHighScore:filteredPlayers",
+              "count": "node:filterHighScore:filteredPlayers.length"
+            }
+          },
+          "outputs": {}
+        }
+      ],
+      "flow": [
+        {"from": "start", "to": "getPlayers"},
+        {"from": "getPlayers", "to": "filterHighScore"},
+        {"from": "filterHighScore", "to": "notifyFiltered"}
+      ]
+    }
+  ]
+}
