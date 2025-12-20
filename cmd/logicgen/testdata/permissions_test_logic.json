@@ -1,0 +1,191 @@
+{
+  "package": "permtest",
+  "schemaPath": "./permissions_test.schema.json",
+  "stateType": "GameState",
+  "handlers": [
+    {
+      "name": "OnStartGame",
+      "event": "StartGame",
+      "permissions": {
+        "hostOnly": true
+      },
+      "parameters": [],
+      "nodes": [
+        {
+          "id": "setStarted",
+          "type": "SetField",
+          "inputs": {
+            "path": {"constant": "GameStarted"},
+            "value": {"constant": true}
+          }
+        },
+        {
+          "id": "emitStarted",
+          "type": "EmitToAll",
+          "inputs": {
+            "eventType": {"constant": "GameStarted"}
+          }
+        }
+      ],
+      "flow": [
+        {"from": "start", "to": "setStarted"},
+        {"from": "setStarted", "to": "emitStarted"},
+        {"from": "emitStarted", "to": "end"}
+      ]
+    },
+    {
+      "name": "OnPlayerMove",
+      "event": "PlayerMove",
+      "permissions": {
+        "playerParam": "playerID"
+      },
+      "parameters": [
+        {"name": "playerID", "type": "string"},
+        {"name": "x", "type": "float64"},
+        {"name": "y", "type": "float64"}
+      ],
+      "nodes": [
+        {
+          "id": "logMove",
+          "type": "EmitToAll",
+          "inputs": {
+            "eventType": {"constant": "PlayerMoved"}
+          }
+        }
+      ],
+      "flow": [
+        {"from": "start", "to": "logMove"},
+        {"from": "logMove", "to": "end"}
+      ]
+    },
+    {
+      "name": "OnAdminCommand",
+      "event": "AdminCommand",
+      "permissions": {
+        "allowedPlayers": ["admin1", "admin2"]
+      },
+      "parameters": [
+        {"name": "command", "type": "string"}
+      ],
+      "nodes": [
+        {
+          "id": "logAdmin",
+          "type": "EmitToAll",
+          "inputs": {
+            "eventType": {"constant": "AdminAction"}
+          }
+        }
+      ],
+      "flow": [
+        {"from": "start", "to": "logAdmin"},
+        {"from": "logAdmin", "to": "end"}
+      ]
+    },
+    {
+      "name": "OnKickPlayer",
+      "event": "KickPlayer",
+      "permissions": {
+        "hostOnly": true
+      },
+      "parameters": [
+        {"name": "targetPlayerID", "type": "string"},
+        {"name": "reason", "type": "string"}
+      ],
+      "nodes": [
+        {
+          "id": "checkNotSelf",
+          "type": "Compare",
+          "inputs": {
+            "left": "param:targetPlayerID",
+            "op": {"constant": "!="},
+            "right": "param:senderID"
+          }
+        },
+        {
+          "id": "ifNotSelf",
+          "type": "If",
+          "inputs": {
+            "condition": "node:checkNotSelf:result"
+          }
+        },
+        {
+          "id": "doKick",
+          "type": "KickPlayer",
+          "inputs": {
+            "playerID": "param:targetPlayerID",
+            "reason": "param:reason"
+          }
+        },
+        {
+          "id": "emitKickFailed",
+          "type": "EmitToPlayer",
+          "inputs": {
+            "playerID": "param:senderID",
+            "eventType": {"constant": "KickFailed"},
+            "payload": {"constant": "Cannot kick yourself"}
+          }
+        }
+      ],
+      "flow": [
+        {"from": "start", "to": "checkNotSelf"},
+        {"from": "checkNotSelf", "to": "ifNotSelf"},
+        {"from": "ifNotSelf", "to": "doKick", "label": "true"},
+        {"from": "ifNotSelf", "to": "emitKickFailed", "label": "false"},
+        {"from": "doKick", "to": "end"},
+        {"from": "emitKickFailed", "to": "end"}
+      ]
+    },
+    {
+      "name": "OnGetHost",
+      "event": "GetHost",
+      "parameters": [],
+      "nodes": [
+        {
+          "id": "getHost",
+          "type": "GetHostPlayer",
+          "inputs": {}
+        },
+        {
+          "id": "emitHost",
+          "type": "EmitToAll",
+          "inputs": {
+            "eventType": {"constant": "CurrentHost"}
+          }
+        }
+      ],
+      "flow": [
+        {"from": "start", "to": "getHost"},
+        {"from": "getHost", "to": "emitHost"},
+        {"from": "emitHost", "to": "end"}
+      ]
+    },
+    {
+      "name": "OnCheckHost",
+      "event": "CheckHost",
+      "parameters": [
+        {"name": "playerID", "type": "string"}
+      ],
+      "nodes": [
+        {
+          "id": "checkHost",
+          "type": "IsHost",
+          "inputs": {
+            "playerID": "param:playerID"
+          }
+        },
+        {
+          "id": "emitResult",
+          "type": "EmitToAll",
+          "inputs": {
+            "eventType": {"constant": "HostCheckResult"}
+          }
+        }
+      ],
+      "flow": [
+        {"from": "start", "to": "checkHost"},
+        {"from": "checkHost", "to": "emitResult"},
+        {"from": "emitResult", "to": "end"}
+      ]
+    }
+  ]
+}

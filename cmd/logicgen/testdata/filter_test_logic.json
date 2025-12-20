@@ -1,0 +1,111 @@
+{
+  "package": "filtertest",
+  "filters": [
+    {
+      "name": "HideEnemyLocations",
+      "description": "Hides enemy team locations from viewer",
+      "parameters": [
+        {"name": "viewerTeam", "type": "string"}
+      ],
+      "nodes": [],
+      "flow": []
+    },
+    {
+      "name": "HidePlayerHand",
+      "description": "Hides a player's private data from others",
+      "parameters": [
+        {"name": "playerID", "type": "string"},
+        {"name": "viewerID", "type": "string"}
+      ],
+      "nodes": [],
+      "flow": []
+    }
+  ],
+  "handlers": [
+    {
+      "name": "OnPlayerJoin",
+      "event": "PlayerJoin",
+      "parameters": [
+        {"name": "playerID", "type": "string"},
+        {"name": "team", "type": "string"}
+      ],
+      "nodes": [
+        {
+          "id": "addEnemyFilter",
+          "type": "AddFilter",
+          "inputs": {
+            "viewerID": "param:playerID",
+            "filterID": "param:playerID",
+            "filterName": {"constant": "HideEnemyLocations"},
+            "params": {
+              "viewerTeam": "param:team"
+            }
+          }
+        },
+        {
+          "id": "emitJoined",
+          "type": "EmitToAll",
+          "inputs": {
+            "eventType": {"constant": "PlayerJoined"}
+          }
+        }
+      ],
+      "flow": [
+        {"from": "start", "to": "addEnemyFilter"},
+        {"from": "addEnemyFilter", "to": "emitJoined"},
+        {"from": "emitJoined", "to": "end"}
+      ]
+    },
+    {
+      "name": "OnPlayerLeave",
+      "event": "PlayerLeave",
+      "parameters": [
+        {"name": "playerID", "type": "string"}
+      ],
+      "nodes": [
+        {
+          "id": "removeEnemyFilter",
+          "type": "RemoveFilter",
+          "inputs": {
+            "viewerID": "param:playerID",
+            "filterID": "param:playerID"
+          }
+        }
+      ],
+      "flow": [
+        {"from": "start", "to": "removeEnemyFilter"},
+        {"from": "removeEnemyFilter", "to": "end"}
+      ]
+    },
+    {
+      "name": "OnCheckFilter",
+      "event": "CheckFilter",
+      "parameters": [
+        {"name": "playerID", "type": "string"},
+        {"name": "filterID", "type": "string"}
+      ],
+      "nodes": [
+        {
+          "id": "hasFilter",
+          "type": "HasFilter",
+          "inputs": {
+            "viewerID": "param:playerID",
+            "filterID": "param:filterID"
+          }
+        },
+        {
+          "id": "emitResult",
+          "type": "EmitToAll",
+          "inputs": {
+            "eventType": {"constant": "FilterCheckResult"}
+          }
+        }
+      ],
+      "flow": [
+        {"from": "start", "to": "hasFilter"},
+        {"from": "hasFilter", "to": "emitResult"},
+        {"from": "emitResult", "to": "end"}
+      ]
+    }
+  ]
+}

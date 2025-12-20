@@ -7,14 +7,90 @@ import (
 	"text/template"
 )
 
+// tsDefaultValue generates TypeScript code for the default value of a field
+func tsDefaultValue(f *FieldDef) string {
+	pt := ParseType(f.Type)
+
+	// Array or map without explicit default
+	if pt.IsArray {
+		return "[]"
+	}
+	if pt.IsMap {
+		return "{}"
+	}
+
+	// No default source -> zero value
+	if f.DefaultSource == "" || f.DefaultSource == DefaultNone {
+		return tsZeroValue(f.Type)
+	}
+
+	// Config reference: @default(config:GameConfig.Speed)
+	if f.DefaultSource == DefaultConfig {
+		parts := strings.Split(f.DefaultValue, ".")
+		if len(parts) == 2 {
+			// Convert to TS getter: getGameConfig().speed
+			fieldName := strings.ToLower(parts[1][:1]) + parts[1][1:]
+			return fmt.Sprintf("get%s().%s", parts[0], fieldName)
+		}
+		return f.DefaultValue
+	}
+
+	// Literal value
+	switch pt.BaseType {
+	case "string":
+		return fmt.Sprintf("'%s'", f.DefaultValue)
+	case "bool":
+		return f.DefaultValue
+	default:
+		return f.DefaultValue
+	}
+}
+
+// tsZeroValue returns the TypeScript zero value for a type
+func tsZeroValue(t string) string {
+	pt := ParseType(t)
+
+	if pt.IsArray {
+		return "[]"
+	}
+	if pt.IsMap {
+		return "{}"
+	}
+
+	switch pt.BaseType {
+	case "string":
+		return "''"
+	case "bool":
+		return "false"
+	case "int8", "int16", "int32", "int64", "int",
+		"uint8", "uint16", "uint32", "uint64", "uint",
+		"float32", "float64":
+		return "0"
+	default:
+		return "{} as " + pt.BaseType
+	}
+}
+
 // GenerateTS generates TypeScript code from a schema file
 func GenerateTS(schema *SchemaFile) ([]byte, error) {
 	tmpl, err := template.New("ts").Funcs(template.FuncMap{
-		"tsType":      TSType,
-		"tsFieldType": TSFieldType,
-		"parseType":   ParseType,
-		"isPrimitive": IsPrimitive,
-		"lower":       strings.ToLower,
+		"tsType":            TSType,
+		"tsFieldType":       TSFieldType,
+		"parseType":         ParseType,
+		"isPrimitive":       IsPrimitive,
+		"lower":             strings.ToLower,
+		"tsDefaultValue":    tsDefaultValue,
+		"tsZeroValue":       tsZeroValue,
+		"isRoot":            func(t *TypeDef) bool { return t.Role == RoleRoot },
+		"isActiveByDefault": func(t *TypeDef) bool { return t.DefaultState == "active" },
+		"hasRootSchemas": func(schema *SchemaFile) bool {
+			for _, t := range schema.Types {
+				if t.Role == RoleRoot {
+					return true
+				}
+			}
+			return false
+		},
 	}).Parse(tsTemplate)
 	if err != nil {
 		return nil, fmt.Errorf("template parse error: %w", err)
@@ -84,27 +160,19 @@ export function createRegistry(): SchemaRegistry {
 }
 
 {{range .Types}}
+// Default {{.Name}} values
+export function default{{.Name}}(): {{.Name}} {
+  return {
+{{- range .Fields}}
+    {{.Name}}: {{tsDefaultValue .}},
+{{- end}}
+  };
+}
+
 // {{.Name}} state container
 export function create{{.Name}}State(registry?: SchemaRegistry): SyncState<{{.Name}}> {
   const reg = registry || createRegistry();
-  return new SyncState<{{.Name}}>({{.Name}}Schema, reg, {
-{{- range .Fields}}
-{{- $pt := parseType .Type}}
-{{- if $pt.IsArray}}
-    {{.Name}}: [],
-{{- else if $pt.IsMap}}
-    {{.Name}}: {},
-{{- else if eq .Type "string"}}
-    {{.Name}}: '',
-{{- else if eq .Type "bool"}}
-    {{.Name}}: false,
-{{- else if or (isPrimitive .Type) (eq .Type "int") (eq .Type "uint")}}
-    {{.Name}}: 0,
-{{- else}}
-    {{.Name}}: {} as {{.Type}},
-{{- end}}
-{{- end}}
-  });
+  return new SyncState<{{.Name}}>({{.Name}}Schema, reg, default{{.Name}}());
 }
 {{end}}
 
@@ -119,4 +187,115 @@ export type ViewType = {{range $i, $v := .Views}}{{if $i}} | {{end}}'{{$v.Name}}
 
 // Re-export types for convenience
 export { FieldType, Operation, Decoder, SchemaRegistry, SyncState } from '@statediff/client';
+
+// ==================================================
+// Schema Activation Manager - manages root schemas
+// ==================================================
+
+export type SchemaName = {{range $i, $t := .Types}}{{if isRoot $t}}{{if $i}} | {{end}}'{{$t.Name}}'{{end}}{{end}};
+
+export interface SchemaInstance<T> {
+  name: SchemaName;
+  state: SyncState<T>;
+  active: boolean;
+}
+
+class SchemaActivationManager {
+  private active: Map<SchemaName, boolean> = new Map();
+  private instances: Map<SchemaName, SyncState<any>> = new Map();
+  private registry: SchemaRegistry;
+
+  constructor() {
+    this.registry = createRegistry();
+    // Initialize with default activation states
+{{- range $t := .Types}}
+{{- if isRoot $t}}
+    this.active.set('{{$t.Name}}', {{isActiveByDefault $t}});
+{{- if isActiveByDefault $t}}
+    this.instances.set('{{$t.Name}}', create{{$t.Name}}State(this.registry));
+{{- end}}
+{{- end}}
+{{- end}}
+  }
+
+  isActive(name: SchemaName): boolean {
+    return this.active.get(name) ?? false;
+  }
+
+  activate(name: SchemaName): void {
+    if (this.active.get(name)) return;
+
+    // Create new instance with defaults
+    switch (name) {
+{{- range $t := .Types}}
+{{- if isRoot $t}}
+      case '{{$t.Name}}':
+        this.instances.set(name, create{{$t.Name}}State(this.registry));
+        break;
+{{- end}}
+{{- end}}
+    }
+    this.active.set(name, true);
+  }
+
+  deactivate(name: SchemaName): void {
+    this.instances.delete(name);
+    this.active.set(name, false);
+  }
+
+  get<T>(name: SchemaName): SyncState<T> | null {
+    return this.instances.get(name) as SyncState<T> | null;
+  }
+
+  getActive(): SchemaName[] {
+    const result: SchemaName[] = [];
+    this.active.forEach((active, name) => {
+      if (active) result.push(name);
+    });
+    return result;
+  }
+
+  resetAll(): void {
+    this.instances.clear();
+{{- range $t := .Types}}
+{{- if isRoot $t}}
+    this.active.set('{{$t.Name}}', {{isActiveByDefault $t}});
+{{- if isActiveByDefault $t}}
+    this.instances.set('{{$t.Name}}', create{{$t.Name}}State(this.registry));
+{{- end}}
+{{- end}}
+{{- end}}
+  }
+}
+
+// Singleton instance
+let schemaManagerInstance: SchemaActivationManager | null = null;
+
+export function getSchemaManager(): SchemaActivationManager {
+  if (!schemaManagerInstance) {
+    schemaManagerInstance = new SchemaActivationManager();
+  }
+  return schemaManagerInstance;
+}
+
+// Convenience functions for typed access
+{{range $t := .Types}}
+{{- if isRoot $t}}
+export function get{{$t.Name}}(): SyncState<{{$t.Name}}> | null {
+  return getSchemaManager().get<{{$t.Name}}>('{{$t.Name}}');
+}
+
+export function activate{{$t.Name}}(): void {
+  getSchemaManager().activate('{{$t.Name}}');
+}
+
+export function deactivate{{$t.Name}}(): void {
+  getSchemaManager().deactivate('{{$t.Name}}');
+}
+
+export function is{{$t.Name}}Active(): boolean {
+  return getSchemaManager().isActive('{{$t.Name}}');
+}
+{{end}}
+{{end}}
 `

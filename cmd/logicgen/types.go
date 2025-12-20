@@ -4,19 +4,85 @@ import "fmt"
 
 // NodeGraph represents the complete node-based logic definition
 type NodeGraph struct {
-	Version  string         `json:"version"`
-	Package  string         `json:"package"`
-	Imports  []string       `json:"imports"`
-	Handlers []EventHandler `json:"handlers"`
+	Version   string               `json:"version"`
+	Package   string               `json:"package"`
+	Imports   []string             `json:"imports"`
+	Filters   []FilterDefinition   `json:"filters,omitempty"`
+	Functions []FunctionDefinition `json:"functions,omitempty"`
+	Handlers  []EventHandler       `json:"handlers"`
+}
+
+// FilterDefinition defines a filter that transforms state for viewers
+type FilterDefinition struct {
+	Name        string      `json:"name"`
+	Description string      `json:"description,omitempty"`
+	Parameters  []Parameter `json:"parameters"`
+	Nodes       []Node      `json:"nodes"`
+	Flow        []FlowEdge  `json:"flow"`
+}
+
+// FunctionDefinition defines a reusable node-based function that can be called from other nodes.
+// Functions allow creating reusable logic that accepts parameters and returns a value.
+//
+// Example usage in JSON:
+//
+//	{
+//	    "functions": [{
+//	        "name": "CalculateDamage",
+//	        "description": "Calculate damage based on attacker and defender stats",
+//	        "parameters": [
+//	            {"name": "attackPower", "type": "int"},
+//	            {"name": "defense", "type": "int"}
+//	        ],
+//	        "returnType": "int",
+//	        "nodes": [...],
+//	        "flow": [...]
+//	    }]
+//	}
+//
+// Then call it from a handler:
+//
+//	{
+//	    "id": "calcDmg",
+//	    "type": "CallFunction",
+//	    "inputs": {
+//	        "function": "CalculateDamage",
+//	        "args": {
+//	            "attackPower": "node:getAttacker:power",
+//	            "defense": "node:getDefender:defense"
+//	        }
+//	    }
+//	}
+type FunctionDefinition struct {
+	Name        string      `json:"name"`
+	Description string      `json:"description,omitempty"`
+	Parameters  []Parameter `json:"parameters"`
+	ReturnType  string      `json:"returnType,omitempty"` // Optional return type (e.g., "int", "string", "bool")
+	Nodes       []Node      `json:"nodes"`
+	Flow        []FlowEdge  `json:"flow"`
 }
 
 // EventHandler represents a handler for a specific event
 type EventHandler struct {
-	Name       string      `json:"name"`
-	Event      string      `json:"event"`
-	Parameters []Parameter `json:"parameters"`
-	Nodes      []Node      `json:"nodes"`
-	Flow       []FlowEdge  `json:"flow"`
+	Name        string            `json:"name"`
+	Event       string            `json:"event"`
+	Permissions *EventPermissions `json:"permissions,omitempty"`
+	Parameters  []Parameter       `json:"parameters"`
+	Nodes       []Node            `json:"nodes"`
+	Flow        []FlowEdge        `json:"flow"`
+}
+
+// EventPermissions defines who can trigger an event
+type EventPermissions struct {
+	// HostOnly - only the session host can trigger this event
+	HostOnly bool `json:"hostOnly,omitempty"`
+
+	// PlayerParam - the named parameter must match senderID
+	// e.g., "playerID" means the playerID param must equal senderID
+	PlayerParam string `json:"playerParam,omitempty"`
+
+	// AllowedPlayers - static list of player IDs that can trigger
+	AllowedPlayers []string `json:"allowedPlayers,omitempty"`
 }
 
 // Parameter represents an input parameter to an event handler
@@ -77,13 +143,14 @@ const (
 	NodeOnTick             NodeType = "OnTick"
 
 	// State access
-	NodeGetField       NodeType = "GetField"
-	NodeSetField       NodeType = "SetField"
-	NodeGetPlayer      NodeType = "GetPlayer"
+	NodeGetField        NodeType = "GetField"
+	NodeSetField        NodeType = "SetField"
+	NodeGetPlayer       NodeType = "GetPlayer"
 	NodeGetCurrentState NodeType = "GetCurrentState"
 
 	// Array operations
 	NodeAddToArray      NodeType = "AddToArray"
+	NodeArrayAppend     NodeType = "ArrayAppend" // Alias for AddToArray with path
 	NodeRemoveFromArray NodeType = "RemoveFromArray"
 	NodeFilterArray     NodeType = "FilterArray"
 	NodeMapArray        NodeType = "MapArray"
@@ -128,6 +195,37 @@ const (
 	NodeRound    NodeType = "Round"
 	NodeFloor    NodeType = "Floor"
 	NodeCeil     NodeType = "Ceil"
+	NodeSqrt     NodeType = "Sqrt"
+	NodePow      NodeType = "Pow"
+	NodeAbs      NodeType = "Abs"
+	NodeSin      NodeType = "Sin"
+	NodeCos      NodeType = "Cos"
+	NodeAtan2    NodeType = "Atan2"
+
+	// GPS/Geometry
+	NodeGpsDistance    NodeType = "GpsDistance"    // Distance between two GPS points in meters
+	NodeGpsMoveToward  NodeType = "GpsMoveToward"  // Move from point A toward point B by distance
+	NodePointInCircle  NodeType = "PointInCircle"  // Check if point is within circle radius
+	NodePointInPolygon NodeType = "PointInPolygon" // Check if point is inside polygon
+
+	// Random
+	NodeRandomInt   NodeType = "RandomInt"   // Random integer in range [min, max]
+	NodeRandomFloat NodeType = "RandomFloat" // Random float in range [min, max)
+	NodeRandomBool  NodeType = "RandomBool"  // Random boolean with probability
+
+	// Time
+	NodeGetCurrentTime NodeType = "GetCurrentTime" // Get current Unix timestamp
+	NodeTimeSince      NodeType = "TimeSince"      // Time elapsed since timestamp
+
+	// Wait/Async (requires context)
+	NodeWait      NodeType = "Wait"      // Pause execution for duration
+	NodeWaitUntil NodeType = "WaitUntil" // Wait until condition is true
+	NodeTimeout   NodeType = "Timeout"   // Execute with timeout
+
+	// Object creation
+	NodeCreateStruct   NodeType = "CreateStruct"   // Create a new struct with field values
+	NodeUpdateStruct   NodeType = "UpdateStruct"   // Update specific fields on a struct
+	NodeGetStructField NodeType = "GetStructField" // Get a field value from a struct
 
 	// String
 	NodeConcat   NodeType = "Concat"
@@ -154,10 +252,26 @@ const (
 	NodeEmitExcept   NodeType = "EmitExcept"
 	NodeEmitToMany   NodeType = "EmitToMany"
 
+	// Session management
+	NodeKickPlayer    NodeType = "KickPlayer"    // Kick a player from session
+	NodeGetHostPlayer NodeType = "GetHostPlayer" // Get the host player ID
+	NodeIsHost        NodeType = "IsHost"        // Check if player is host
+
+	// Filters
+	NodeAddFilter    NodeType = "AddFilter"    // Add a filter for a viewer
+	NodeRemoveFilter NodeType = "RemoveFilter" // Remove a filter from a viewer
+	NodeHasFilter    NodeType = "HasFilter"    // Check if a filter exists
+
 	// Effects
 	NodeAddEffect    NodeType = "AddEffect"
 	NodeRemoveEffect NodeType = "RemoveEffect"
 	NodeHasEffect    NodeType = "HasEffect"
+
+	// Batch operations
+	NodeForEachWhere NodeType = "ForEachWhere" // Iterate + filter in one: forEach where condition
+	NodeUpdateWhere  NodeType = "UpdateWhere"  // Update all matching: array.where(cond).set(field, value)
+	NodeFindWhere    NodeType = "FindWhere"    // Find first matching
+	NodeCountWhere   NodeType = "CountWhere"   // Count matching elements
 )
 
 // NodeDefinition describes the inputs, outputs, and behavior of a node type
@@ -167,7 +281,10 @@ type NodeDefinition struct {
 	Description string
 	Inputs      []PortDefinition
 	Outputs     []PortDefinition
-	Generator   func(*CodeGenerator, *Node) error
+	// Generator is called during code generation to produce the node's code.
+	// For built-in nodes, this is typically nil and a switch statement is used.
+	// For custom nodes registered via RegisterNode(), this function is required.
+	Generator func(*GeneratorContext, *Node) error
 }
 
 // PortDefinition describes an input or output port
@@ -178,165 +295,16 @@ type PortDefinition struct {
 	Default  interface{}
 }
 
-// GetNodeDefinition returns the definition for a node type
+// GetNodeDefinition returns the definition for a node type.
+// All node definitions are now registered via the registry system in nodes_*.go files.
 func GetNodeDefinition(nodeType string) (*NodeDefinition, error) {
-	def, ok := nodeDefinitions[NodeType(nodeType)]
-	if !ok {
-		return nil, fmt.Errorf("unknown node type: %s", nodeType)
+	allDefs := GetAllNodeDefinitions()
+	if def, ok := allDefs[NodeType(nodeType)]; ok {
+		return def, nil
 	}
-	return def, nil
+	return nil, fmt.Errorf("unknown node type: %s", nodeType)
 }
 
-// nodeDefinitions maps node types to their definitions
-var nodeDefinitions = map[NodeType]*NodeDefinition{
-	NodeGetField: {
-		Type:        NodeGetField,
-		Category:    "State",
-		Description: "Gets a field value from the state",
-		Inputs: []PortDefinition{
-			{Name: "path", Type: "string", Required: true},
-		},
-		Outputs: []PortDefinition{
-			{Name: "value", Type: "any", Required: true},
-		},
-	},
-	NodeSetField: {
-		Type:        NodeSetField,
-		Category:    "State",
-		Description: "Sets a field value in the state",
-		Inputs: []PortDefinition{
-			{Name: "path", Type: "string", Required: true},
-			{Name: "value", Type: "any", Required: true},
-		},
-		Outputs: []PortDefinition{},
-	},
-	NodeGetPlayer: {
-		Type:        NodeGetPlayer,
-		Category:    "State",
-		Description: "Gets a player by ID",
-		Inputs: []PortDefinition{
-			{Name: "playerID", Type: "string", Required: true},
-		},
-		Outputs: []PortDefinition{
-			{Name: "player", Type: "*Player", Required: true},
-		},
-	},
-	NodeAddToArray: {
-		Type:        NodeAddToArray,
-		Category:    "Array",
-		Description: "Adds an element to an array",
-		Inputs: []PortDefinition{
-			{Name: "array", Type: "[]any", Required: true},
-			{Name: "element", Type: "any", Required: true},
-		},
-		Outputs: []PortDefinition{
-			{Name: "result", Type: "[]any", Required: true},
-		},
-	},
-	NodeRemoveFromArray: {
-		Type:        NodeRemoveFromArray,
-		Category:    "Array",
-		Description: "Removes elements from an array",
-		Inputs: []PortDefinition{
-			{Name: "array", Type: "[]any", Required: true},
-			{Name: "index", Type: "int", Required: false},
-			{Name: "predicate", Type: "func(any) bool", Required: false},
-		},
-		Outputs: []PortDefinition{
-			{Name: "result", Type: "[]any", Required: true},
-		},
-	},
-	NodeFilterArray: {
-		Type:        NodeFilterArray,
-		Category:    "Array",
-		Description: "Filters an array based on a predicate",
-		Inputs: []PortDefinition{
-			{Name: "array", Type: "[]any", Required: true},
-			{Name: "predicate", Type: "func(any) bool", Required: true},
-		},
-		Outputs: []PortDefinition{
-			{Name: "result", Type: "[]any", Required: true},
-		},
-	},
-	NodeCompare: {
-		Type:        NodeCompare,
-		Category:    "Logic",
-		Description: "Compares two values",
-		Inputs: []PortDefinition{
-			{Name: "left", Type: "any", Required: true},
-			{Name: "op", Type: "string", Required: true},
-			{Name: "right", Type: "any", Required: true},
-		},
-		Outputs: []PortDefinition{
-			{Name: "result", Type: "bool", Required: true},
-		},
-	},
-	NodeIf: {
-		Type:        NodeIf,
-		Category:    "Control Flow",
-		Description: "Conditional branch",
-		Inputs: []PortDefinition{
-			{Name: "condition", Type: "bool", Required: true},
-		},
-		Outputs: []PortDefinition{
-			{Name: "true", Type: "flow", Required: false},
-			{Name: "false", Type: "flow", Required: false},
-		},
-	},
-	NodeForEach: {
-		Type:        NodeForEach,
-		Category:    "Control Flow",
-		Description: "Iterates over array elements",
-		Inputs: []PortDefinition{
-			{Name: "array", Type: "[]any", Required: true},
-		},
-		Outputs: []PortDefinition{
-			{Name: "item", Type: "any", Required: true},
-			{Name: "index", Type: "int", Required: true},
-		},
-	},
-	NodeEmitToAll: {
-		Type:        NodeEmitToAll,
-		Category:    "Events",
-		Description: "Emits an event to all players",
-		Inputs: []PortDefinition{
-			{Name: "eventType", Type: "string", Required: true},
-			{Name: "payload", Type: "map[string]any", Required: false},
-		},
-		Outputs: []PortDefinition{},
-	},
-	NodeEmitToPlayer: {
-		Type:        NodeEmitToPlayer,
-		Category:    "Events",
-		Description: "Emits an event to a specific player",
-		Inputs: []PortDefinition{
-			{Name: "playerID", Type: "string", Required: true},
-			{Name: "eventType", Type: "string", Required: true},
-			{Name: "payload", Type: "map[string]any", Required: false},
-		},
-		Outputs: []PortDefinition{},
-	},
-	NodeAdd: {
-		Type:        NodeAdd,
-		Category:    "Math",
-		Description: "Adds two numbers",
-		Inputs: []PortDefinition{
-			{Name: "a", Type: "number", Required: true},
-			{Name: "b", Type: "number", Required: true},
-		},
-		Outputs: []PortDefinition{
-			{Name: "result", Type: "number", Required: true},
-		},
-	},
-	NodeConcat: {
-		Type:        NodeConcat,
-		Category:    "String",
-		Description: "Concatenates strings",
-		Inputs: []PortDefinition{
-			{Name: "strings", Type: "[]string", Required: true},
-		},
-		Outputs: []PortDefinition{
-			{Name: "result", Type: "string", Required: true},
-		},
-	},
-}
+// nodeDefinitions is now empty - all nodes are registered via the registry system.
+// See nodes_core.go, nodes_logic.go, nodes_events.go, nodes_async.go, nodes_gps.go
+var nodeDefinitions = map[NodeType]*NodeDefinition{}

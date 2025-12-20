@@ -3,27 +3,67 @@
 
 package main
 
+// ==================================================
+// Helper schemas - used by other schemas
+// ==================================================
+
 // Player represents a player in the game
-@id(2)
+@id(2) @helper
 type Player {
     ID      string
-    Name    string
-    Score   int64
-    Hand    []int32    @view(owner)    // Only visible to the player themselves
-    Ready   bool
+    Name    string      @default("")
+    Score   int64       @default(0)
+    Hand    []int32     @view(owner)    // Only visible to the player themselves
+    Ready   bool        @default(false)
 }
 
-// GameState is the main game state
-@id(1)
+// Drone represents a drone entity in drone mode
+@id(4) @helper
+type Drone {
+    ID          string
+    X           float64     @default(0)
+    Y           float64     @default(0)
+    Health      int32       @default(100)
+    OwnerID     string
+}
+
+// ==================================================
+// Root schemas - activatable game modes
+// ==================================================
+
+// GameState is the main game state - ACTIVE by default
+@id(1) @root(active)
 type GameState {
-    Round       int32
-    Phase       string
-    Players     []Player    @key(ID)
+    Round       int32                   @default(1)
+    Phase       string                  @default("lobby")
+    Players     []Player                @key(ID)
     Scores      map[string]int64
-    SecretSeed  int64       @view(admin)   // Only visible to admins
+    SecretSeed  int64                   @view(admin)
+    SpeedMult   float64                 @default(config:GameConfig.Speed)
 }
 
+// DroneMode - optional drone game mode - INACTIVE by default
+@id(3) @root(inactive)
+type DroneMode {
+    Drones          []Drone             @key(ID)
+    SpawnInterval   int32               @default(5)          // seconds between spawns
+    MaxDrones       int32               @default(10)
+    GameDuration    int32               @default(300)        // 5 minutes
+    TimeRemaining   int32               @default(300)
+}
+
+// TournamentMode - competitive mode - INACTIVE by default
+@id(5) @root(inactive)
+type TournamentMode {
+    BracketRound    int32               @default(1)
+    Matches         map[string]string   // matchID -> winnerID
+    Eliminated      []string
+    PrizePool       int64               @default(0)
+}
+
+// ==================================================
 // Views define who can see what
+// ==================================================
 view all {}                      // Everyone sees fields without @view
 view admin { includes: all }     // Admins see everything including @view(admin)
 view owner { includes: all }     // Owners see their own @view(owner) fields

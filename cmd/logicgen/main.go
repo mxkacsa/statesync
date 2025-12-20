@@ -33,8 +33,10 @@ import (
 
 var (
 	inputFile  = flag.String("input", "", "input node graph JSON file (required)")
+	schemaFile = flag.String("schema", "", "schema JSON file (required for type-safe generation)")
 	outputFile = flag.String("output", "", "output Go file (required)")
 	validate   = flag.Bool("validate", false, "only validate, don't generate")
+	debugMode  = flag.Bool("debug", false, "generate debug hooks for tracing (use with -tags debug)")
 )
 
 func main() {
@@ -48,6 +50,12 @@ func main() {
 
 	if !*validate && *outputFile == "" {
 		fmt.Fprintln(os.Stderr, "logicgen: -output flag is required (unless -validate is set)")
+		flag.Usage()
+		os.Exit(1)
+	}
+
+	if *schemaFile == "" {
+		fmt.Fprintln(os.Stderr, "logicgen: -schema flag is required for type-safe generation")
 		flag.Usage()
 		os.Exit(1)
 	}
@@ -83,8 +91,15 @@ func main() {
 		return
 	}
 
+	// Load schema
+	schemaCtx, err := LoadSchema(*schemaFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "logicgen: cannot load schema: %v\n", err)
+		os.Exit(1)
+	}
+
 	// Generate code
-	generator := NewCodeGenerator(&nodeGraph)
+	generator := NewCodeGeneratorWithDebug(&nodeGraph, schemaCtx, *debugMode)
 	code, err := generator.Generate()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "logicgen: code generation failed: %v\n", err)
@@ -97,5 +112,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("Generated: %s\n", *outputFile)
+	if *debugMode {
+		fmt.Printf("Generated (debug mode): %s\n", *outputFile)
+	} else {
+		fmt.Printf("Generated: %s\n", *outputFile)
+	}
 }

@@ -2,6 +2,71 @@
   "version": "1.0",
   "package": "main",
   "imports": [],
+  "functions": [
+    {
+      "name": "GetPlayerHighestCard",
+      "description": "Finds the highest card value in a player's hand",
+      "parameters": [
+        {"name": "playerID", "type": "string"}
+      ],
+      "returnType": "int",
+      "nodes": [
+        {
+          "id": "getPlayer",
+          "type": "GetPlayer",
+          "inputs": {
+            "playerID": "param:playerID"
+          }
+        },
+        {
+          "id": "initMax",
+          "type": "Constant",
+          "inputs": {
+            "value": {"constant": 0}
+          }
+        },
+        {
+          "id": "findMax",
+          "type": "ForEach",
+          "inputs": {
+            "array": "node:getPlayer:player.Hand"
+          }
+        },
+        {
+          "id": "checkIfHigher",
+          "type": "Compare",
+          "inputs": {
+            "left": "foreach:item",
+            "op": {"constant": ">"},
+            "right": "node:initMax:value"
+          }
+        },
+        {
+          "id": "updateMax",
+          "type": "Max",
+          "inputs": {
+            "a": "node:initMax:value",
+            "b": "foreach:item"
+          }
+        },
+        {
+          "id": "return",
+          "type": "Return",
+          "inputs": {
+            "value": "node:updateMax:result"
+          }
+        }
+      ],
+      "flow": [
+        {"from": "start", "to": "getPlayer"},
+        {"from": "getPlayer", "to": "initMax"},
+        {"from": "initMax", "to": "findMax"},
+        {"from": "findMax", "to": "checkIfHigher"},
+        {"from": "checkIfHigher", "to": "updateMax"},
+        {"from": "updateMax", "to": "return"}
+      ]
+    }
+  ],
   "handlers": [
     {
       "name": "OnCardPlayed",
@@ -216,6 +281,83 @@
         {"from": "start", "to": "getPlayers"},
         {"from": "getPlayers", "to": "filterHighScore"},
         {"from": "filterHighScore", "to": "notifyFiltered"}
+      ]
+    },
+    {
+      "name": "OnCompareHighestCards",
+      "description": "Compares two players' highest cards and announces winner",
+      "event": "CompareHighestCards",
+      "parameters": [
+        {"name": "player1ID", "type": "string"},
+        {"name": "player2ID", "type": "string"}
+      ],
+      "nodes": [
+        {
+          "id": "getCard1",
+          "type": "CallFunction",
+          "inputs": {
+            "function": {"constant": "GetPlayerHighestCard"},
+            "args": {
+              "playerID": "param:player1ID"
+            }
+          }
+        },
+        {
+          "id": "getCard2",
+          "type": "CallFunction",
+          "inputs": {
+            "function": {"constant": "GetPlayerHighestCard"},
+            "args": {
+              "playerID": "param:player2ID"
+            }
+          }
+        },
+        {
+          "id": "compareCards",
+          "type": "Compare",
+          "inputs": {
+            "left": "node:getCard1:result",
+            "op": {"constant": ">"},
+            "right": "node:getCard2:result"
+          }
+        },
+        {
+          "id": "checkWinner",
+          "type": "If",
+          "inputs": {
+            "condition": "node:compareCards:result"
+          }
+        },
+        {
+          "id": "player1Wins",
+          "type": "EmitToAll",
+          "inputs": {
+            "eventType": {"constant": "RoundWinner"},
+            "payload": {
+              "winnerID": "param:player1ID",
+              "winningCard": "node:getCard1:result"
+            }
+          }
+        },
+        {
+          "id": "player2Wins",
+          "type": "EmitToAll",
+          "inputs": {
+            "eventType": {"constant": "RoundWinner"},
+            "payload": {
+              "winnerID": "param:player2ID",
+              "winningCard": "node:getCard2:result"
+            }
+          }
+        }
+      ],
+      "flow": [
+        {"from": "start", "to": "getCard1"},
+        {"from": "getCard1", "to": "getCard2"},
+        {"from": "getCard2", "to": "compareCards"},
+        {"from": "compareCards", "to": "checkWinner"},
+        {"from": "checkWinner", "to": "player1Wins", "condition": "true"},
+        {"from": "checkWinner", "to": "player2Wins", "condition": "false"}
       ]
     }
   ]
