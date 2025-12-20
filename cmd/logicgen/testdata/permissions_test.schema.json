@@ -1,0 +1,22 @@
+{
+  "package": "permtest",
+  "types": [
+    {
+      "name": "GameState",
+      "id": 1,
+      "fields": [
+        {"name": "GameStarted", "type": "bool"},
+        {"name": "Players", "type": "[]Player", "key": "ID"}
+      ]
+    },
+    {
+      "name": "Player",
+      "id": 2,
+      "fields": [
+        {"name": "ID", "type": "string"},
+        {"name": "Name", "type": "string"},
+        {"name": "Score", "type": "int32"}
+      ]
+    }
+  ]
+}

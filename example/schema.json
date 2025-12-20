@@ -1,0 +1,199 @@
+{
+  "package": "main",
+  "types": [
+    {
+      "name": "Player",
+      "id": 2,
+      "fields": [
+        {
+          "name": "ID",
+          "type": "string"
+        },
+        {
+          "name": "Name",
+          "type": "string",
+          "defaultSource": "literal"
+        },
+        {
+          "name": "Score",
+          "type": "int64",
+          "defaultSource": "literal",
+          "defaultValue": "0"
+        },
+        {
+          "name": "Hand",
+          "type": "[]int32",
+          "views": [
+            "owner"
+          ]
+        },
+        {
+          "name": "Ready",
+          "type": "bool",
+          "defaultSource": "literal",
+          "defaultValue": "false"
+        }
+      ],
+      "role": "helper",
+      "defaultState": "inactive"
+    },
+    {
+      "name": "Drone",
+      "id": 4,
+      "fields": [
+        {
+          "name": "ID",
+          "type": "string"
+        },
+        {
+          "name": "X",
+          "type": "float64",
+          "defaultSource": "literal",
+          "defaultValue": "0"
+        },
+        {
+          "name": "Y",
+          "type": "float64",
+          "defaultSource": "literal",
+          "defaultValue": "0"
+        },
+        {
+          "name": "Health",
+          "type": "int32",
+          "defaultSource": "literal",
+          "defaultValue": "100"
+        },
+        {
+          "name": "OwnerID",
+          "type": "string"
+        }
+      ],
+      "role": "helper",
+      "defaultState": "inactive"
+    },
+    {
+      "name": "GameState",
+      "id": 1,
+      "fields": [
+        {
+          "name": "Round",
+          "type": "int32",
+          "defaultSource": "literal",
+          "defaultValue": "1"
+        },
+        {
+          "name": "Phase",
+          "type": "string",
+          "defaultSource": "literal",
+          "defaultValue": "lobby"
+        },
+        {
+          "name": "Players",
+          "type": "[]Player",
+          "key": "ID"
+        },
+        {
+          "name": "Scores",
+          "type": "map[string]int64"
+        },
+        {
+          "name": "SecretSeed",
+          "type": "int64",
+          "views": [
+            "admin"
+          ]
+        },
+        {
+          "name": "SpeedMult",
+          "type": "float64",
+          "defaultSource": "config",
+          "defaultValue": "GameConfig.Speed"
+        }
+      ],
+      "role": "root",
+      "defaultState": "active"
+    },
+    {
+      "name": "DroneMode",
+      "id": 3,
+      "fields": [
+        {
+          "name": "Drones",
+          "type": "[]Drone",
+          "key": "ID"
+        },
+        {
+          "name": "SpawnInterval",
+          "type": "int32",
+          "defaultSource": "literal",
+          "defaultValue": "5"
+        },
+        {
+          "name": "MaxDrones",
+          "type": "int32",
+          "defaultSource": "literal",
+          "defaultValue": "10"
+        },
+        {
+          "name": "GameDuration",
+          "type": "int32",
+          "defaultSource": "literal",
+          "defaultValue": "300"
+        },
+        {
+          "name": "TimeRemaining",
+          "type": "int32",
+          "defaultSource": "literal",
+          "defaultValue": "300"
+        }
+      ],
+      "role": "root",
+      "defaultState": "inactive"
+    },
+    {
+      "name": "TournamentMode",
+      "id": 5,
+      "fields": [
+        {
+          "name": "BracketRound",
+          "type": "int32",
+          "defaultSource": "literal",
+          "defaultValue": "1"
+        },
+        {
+          "name": "Matches",
+          "type": "map[string]string"
+        },
+        {
+          "name": "Eliminated",
+          "type": "[]string"
+        },
+        {
+          "name": "PrizePool",
+          "type": "int64",
+          "defaultSource": "literal",
+          "defaultValue": "0"
+        }
+      ],
+      "role": "root",
+      "defaultState": "inactive"
+    }
+  ],
+  "views": [
+    {
+      "name": "all"
+    },
+    {
+      "name": "admin",
+      "includes": [
+        "all"
+      ]
+    },
+    {
+      "name": "owner",
+      "includes": [
+        "all"
+      ]
+    }
+  ]
+}

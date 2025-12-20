@@ -7,20 +7,51 @@ type SchemaFile struct {
 	Views   []*ViewDef `json:"views,omitempty"`
 }
 
+// SchemaRole indicates whether a type is a root (activatable) or helper type
+type SchemaRole string
+
+const (
+	RoleHelper SchemaRole = "helper" // Used by other schemas, not independently activatable
+	RoleRoot   SchemaRole = "root"   // Main schema, can be activated/deactivated
+)
+
 // TypeDef represents a schema type definition
 type TypeDef struct {
-	Name   string      `json:"name"`
-	ID     int         `json:"id"`
-	Fields []*FieldDef `json:"fields"`
+	Name         string      `json:"name"`
+	ID           int         `json:"id"`
+	Fields       []*FieldDef `json:"fields"`
+	Role         SchemaRole  `json:"role,omitempty"`         // helper or root (default: helper)
+	DefaultState string      `json:"defaultState,omitempty"` // For root: "active" or "inactive" (default: inactive)
 }
+
+// IsRoot returns true if this is an activatable root schema
+func (t *TypeDef) IsRoot() bool {
+	return t.Role == RoleRoot
+}
+
+// IsActiveByDefault returns true if this root schema should be active on start
+func (t *TypeDef) IsActiveByDefault() bool {
+	return t.Role == RoleRoot && t.DefaultState == "active"
+}
+
+// DefaultSource indicates where a default value comes from
+type DefaultSource string
+
+const (
+	DefaultNone    DefaultSource = ""        // No default (zero value)
+	DefaultLiteral DefaultSource = "literal" // Hardcoded value: @default(42)
+	DefaultConfig  DefaultSource = "config"  // From config: @default(config:GameConfig.Speed)
+)
 
 // FieldDef represents a field definition
 type FieldDef struct {
-	Name     string   `json:"name"`
-	Type     string   `json:"type"`               // int32, string, []Player, map[string]int, etc.
-	Key      string   `json:"key,omitempty"`      // For arrays: key field for tracking
-	Views    []string `json:"views,omitempty"`    // Which views can see this field
-	Optional bool     `json:"optional,omitempty"` // Pointer/nullable
+	Name          string        `json:"name"`
+	Type          string        `json:"type"`                    // int32, string, []Player, map[string]int, etc.
+	Key           string        `json:"key,omitempty"`           // For arrays: key field for tracking
+	Views         []string      `json:"views,omitempty"`         // Which views can see this field
+	Optional      bool          `json:"optional,omitempty"`      // Pointer/nullable
+	DefaultSource DefaultSource `json:"defaultSource,omitempty"` // Where default comes from
+	DefaultValue  string        `json:"defaultValue,omitempty"`  // Literal value or config path (e.g., "GameConfig.Speed")
 }
 
 // ViewDef represents a view/projection definition

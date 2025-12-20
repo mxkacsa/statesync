@@ -45,15 +45,15 @@ func (p *Parser) parse() (*SchemaFile, error) {
 			continue
 		}
 
-		if strings.HasPrefix(line, "@id(") {
-			// Type definition with ID annotation
-			id, err := p.parseIDAnnotation(line)
+		if strings.HasPrefix(line, "@") {
+			// Type annotations line (@id, @root, @helper)
+			ann, err := p.parseTypeAnnotations(line)
 			if err != nil {
-				return nil, p.errorf("invalid @id annotation: %v", err)
+				return nil, p.errorf("invalid type annotation: %v", err)
 			}
 
 			// Next non-empty line should be "type Name {"
-			typeDef, err := p.parseType(id)
+			typeDef, err := p.parseTypeWithAnnotations(ann)
 			if err != nil {
 				return nil, err
 			}
@@ -88,18 +88,58 @@ func (p *Parser) parse() (*SchemaFile, error) {
 	return p.file, nil
 }
 
-func (p *Parser) parseIDAnnotation(line string) (int, error) {
-	// Parse @id(123)
-	start := strings.Index(line, "(")
-	end := strings.Index(line, ")")
-	if start == -1 || end == -1 || end <= start {
-		return 0, fmt.Errorf("invalid @id syntax")
-	}
-	idStr := strings.TrimSpace(line[start+1 : end])
-	return strconv.Atoi(idStr)
+// TypeAnnotations holds all annotations for a type definition
+type TypeAnnotations struct {
+	ID           int
+	Role         SchemaRole
+	DefaultState string // "active" or "inactive"
 }
 
-func (p *Parser) parseType(id int) (*TypeDef, error) {
+func (p *Parser) parseTypeAnnotations(line string) (*TypeAnnotations, error) {
+	ann := &TypeAnnotations{
+		Role:         RoleHelper, // Default is helper
+		DefaultState: "inactive",
+	}
+
+	// Parse @id(123)
+	if strings.Contains(line, "@id(") {
+		start := strings.Index(line, "@id(")
+		end := strings.Index(line[start:], ")") + start
+		if end <= start {
+			return nil, fmt.Errorf("invalid @id syntax")
+		}
+		idStr := strings.TrimSpace(line[start+4 : end])
+		id, err := strconv.Atoi(idStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid @id value: %v", err)
+		}
+		ann.ID = id
+	}
+
+	// Parse @helper
+	if strings.Contains(line, "@helper") {
+		ann.Role = RoleHelper
+	}
+
+	// Parse @root or @root(active) or @root(inactive)
+	if strings.Contains(line, "@root") {
+		ann.Role = RoleRoot
+		// Check for @root(active) or @root(inactive)
+		if idx := strings.Index(line, "@root("); idx != -1 {
+			end := strings.Index(line[idx:], ")") + idx
+			if end > idx {
+				state := strings.TrimSpace(line[idx+6 : end])
+				if state == "active" || state == "inactive" {
+					ann.DefaultState = state
+				}
+			}
+		}
+	}
+
+	return ann, nil
+}
+
+func (p *Parser) parseTypeWithAnnotations(ann *TypeAnnotations) (*TypeDef, error) {
 	// Find next non-empty line with "type Name {"
 	for p.scanner.Scan() {
 		p.line++
@@ -107,9 +147,16 @@ func (p *Parser) parseType(id int) (*TypeDef, error) {
 		if line == "" || strings.HasPrefix(line, "//") {
 			continue
 		}
-		return p.parseTypeFromLine(line, id)
+		typeDef, err := p.parseTypeFromLine(line, ann.ID)
+		if err != nil {
+			return nil, err
+		}
+		// Apply annotations
+		typeDef.Role = ann.Role
+		typeDef.DefaultState = ann.DefaultState
+		return typeDef, nil
 	}
-	return nil, p.errorf("unexpected end of file after @id")
+	return nil, p.errorf("unexpected end of file after type annotations")
 }
 
 func (p *Parser) parseTypeFromLine(line string, id int) (*TypeDef, error) {
@@ -172,7 +219,7 @@ func (p *Parser) parseTypeFromLine(line string, id int) (*TypeDef, error) {
 }
 
 func (p *Parser) parseField(line string) (*FieldDef, error) {
-	// Parse: "name  type  @key(ID) @view(owner)"
+	// Parse: "name  type  @key(ID) @view(owner) @default(value)"
 	// Split by whitespace first
 	parts := strings.Fields(line)
 	if len(parts) < 2 {
@@ -180,9 +227,10 @@ func (p *Parser) parseField(line string) (*FieldDef, error) {
 	}
 
 	field := &FieldDef{
-		Name:  parts[0],
-		Type:  parts[1],
-		Views: []string{}, // Default: visible to all
+		Name:          parts[0],
+		Type:          parts[1],
+		Views:         []string{}, // Default: visible to all
+		DefaultSource: DefaultNone,
 	}
 
 	// Parse annotations
@@ -207,6 +255,34 @@ func (p *Parser) parseField(line string) (*FieldDef, error) {
 			// Split by comma if multiple views
 			for _, v := range strings.Split(views, ",") {
 				field.Views = append(field.Views, strings.TrimSpace(v))
+			}
+			continue
+		}
+
+		if strings.HasPrefix(ann, "@default(") {
+			end := strings.LastIndex(ann, ")")
+			if end == -1 {
+				return nil, p.errorf("invalid @default annotation: %s", ann)
+			}
+			value := ann[9:end]
+
+			// Check if it's a quoted string (keep track for empty string support)
+			isQuoted := (strings.HasPrefix(value, `"`) && strings.HasSuffix(value, `"`)) ||
+				(strings.HasPrefix(value, `'`) && strings.HasSuffix(value, `'`))
+			value = strings.Trim(value, `"'`)
+
+			// Check if it's a config reference: @default(config:GameConfig.Speed)
+			if strings.HasPrefix(value, "config:") {
+				field.DefaultSource = DefaultConfig
+				field.DefaultValue = strings.TrimPrefix(value, "config:")
+			} else {
+				field.DefaultSource = DefaultLiteral
+				// For empty quoted strings, keep empty value explicitly
+				if isQuoted && value == "" {
+					field.DefaultValue = ""
+				} else {
+					field.DefaultValue = value
+				}
 			}
 			continue
 		}

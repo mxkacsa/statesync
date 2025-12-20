@@ -1,0 +1,193 @@
+{
+  "version": "1.0",
+  "package": "game",
+  "imports": [],
+  "handlers": [
+    {
+      "name": "OnCardPlayed",
+      "event": "CardPlayed",
+      "parameters": [
+        {"name": "playerID", "type": "string"},
+        {"name": "cardIndex", "type": "int"}
+      ],
+      "nodes": [
+        {
+          "id": "getPlayer",
+          "type": "GetPlayer",
+          "inputs": {
+            "playerID": "param:playerID"
+          }
+        },
+        {
+          "id": "addScore",
+          "type": "Add",
+          "inputs": {
+            "a": {"constant": 100},
+            "b": {"constant": 10}
+          }
+        },
+        {
+          "id": "emitCardPlayed",
+          "type": "EmitToAll",
+          "inputs": {
+            "eventType": {"constant": "CardPlayedEvent"}
+          }
+        }
+      ],
+      "flow": [
+        {"from": "start", "to": "getPlayer"},
+        {"from": "getPlayer", "to": "addScore"},
+        {"from": "addScore", "to": "emitCardPlayed"},
+        {"from": "emitCardPlayed", "to": "end"}
+      ]
+    },
+    {
+      "name": "OnSetTeamTarget",
+      "event": "SetTeamTarget",
+      "parameters": [
+        {"name": "teamID", "type": "int32"},
+        {"name": "targetX", "type": "float32"},
+        {"name": "targetY", "type": "float32"}
+      ],
+      "nodes": [
+        {
+          "id": "updateTeamPositions",
+          "type": "UpdateWhere",
+          "inputs": {
+            "path": {"constant": "Players"},
+            "whereField": {"constant": "Team"},
+            "whereOp": {"constant": "=="},
+            "whereValue": "param:teamID",
+            "setField": {"constant": "TargetX"},
+            "setValue": "param:targetX"
+          }
+        },
+        {
+          "id": "emitTeamMoved",
+          "type": "EmitToAll",
+          "inputs": {
+            "eventType": {"constant": "TeamMoved"}
+          }
+        }
+      ],
+      "flow": [
+        {"from": "start", "to": "updateTeamPositions"},
+        {"from": "updateTeamPositions", "to": "emitTeamMoved"},
+        {"from": "emitTeamMoved", "to": "end"}
+      ]
+    },
+    {
+      "name": "OnNextRound",
+      "event": "NextRound",
+      "parameters": [],
+      "nodes": [
+        {
+          "id": "getRound",
+          "type": "GetField",
+          "inputs": {
+            "path": {"constant": "Round"}
+          }
+        },
+        {
+          "id": "incrementRound",
+          "type": "Add",
+          "inputs": {
+            "a": "node:getRound:value",
+            "b": {"constant": 1}
+          }
+        },
+        {
+          "id": "setRound",
+          "type": "SetField",
+          "inputs": {
+            "path": {"constant": "Round"},
+            "value": "node:incrementRound:result"
+          }
+        },
+        {
+          "id": "countReadyPlayers",
+          "type": "CountWhere",
+          "inputs": {
+            "array": "state:Players",
+            "field": {"constant": "IsReady"},
+            "op": {"constant": "=="},
+            "value": {"constant": true}
+          }
+        },
+        {
+          "id": "emitRoundStarted",
+          "type": "EmitToAll",
+          "inputs": {
+            "eventType": {"constant": "RoundStarted"}
+          }
+        }
+      ],
+      "flow": [
+        {"from": "start", "to": "getRound"},
+        {"from": "getRound", "to": "incrementRound"},
+        {"from": "incrementRound", "to": "setRound"},
+        {"from": "setRound", "to": "countReadyPlayers"},
+        {"from": "countReadyPlayers", "to": "emitRoundStarted"},
+        {"from": "emitRoundStarted", "to": "end"}
+      ]
+    },
+    {
+      "name": "OnPlayerConnect",
+      "event": "PlayerConnect",
+      "parameters": [
+        {"name": "playerID", "type": "string"},
+        {"name": "playerName", "type": "string"}
+      ],
+      "nodes": [
+        {
+          "id": "checkPlayerCount",
+          "type": "ArrayLength",
+          "inputs": {
+            "array": "state:Players"
+          }
+        },
+        {
+          "id": "checkLimit",
+          "type": "Compare",
+          "inputs": {
+            "left": "node:checkPlayerCount:length",
+            "op": {"constant": "<"},
+            "right": {"constant": 4}
+          }
+        },
+        {
+          "id": "ifCanJoin",
+          "type": "If",
+          "inputs": {
+            "condition": "node:checkLimit:result"
+          }
+        },
+        {
+          "id": "emitJoined",
+          "type": "EmitToPlayer",
+          "inputs": {
+            "playerID": "param:playerID",
+            "eventType": {"constant": "JoinAccepted"}
+          }
+        },
+        {
+          "id": "emitRejected",
+          "type": "EmitToPlayer",
+          "inputs": {
+            "playerID": "param:playerID",
+            "eventType": {"constant": "JoinRejected"}
+          }
+        }
+      ],
+      "flow": [
+        {"from": "start", "to": "checkPlayerCount"},
+        {"from": "checkPlayerCount", "to": "checkLimit"},
+        {"from": "checkLimit", "to": "ifCanJoin"},
+        {"from": "ifCanJoin", "to": "emitJoined", "label": "true"},
+        {"from": "ifCanJoin", "to": "emitRejected", "label": "false"},
+        {"from": "emitJoined", "to": "end"},
+        {"from": "emitRejected", "to": "end"}
+      ]
+    }
+  ]
+}

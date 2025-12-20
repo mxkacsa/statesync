@@ -1,0 +1,55 @@
+{
+  "version": "1.0",
+  "package": "example",
+  "imports": [],
+  "handlers": [
+    {
+      "name": "OnScoreUpdate",
+      "event": "ScoreUpdate",
+      "parameters": [
+        {"name": "playerID", "type": "string"},
+        {"name": "points", "type": "int64"}
+      ],
+      "nodes": [
+        {
+          "id": "getPlayer",
+          "type": "GetPlayer",
+          "inputs": {
+            "playerID": "param:playerID"
+          },
+          "outputs": {
+            "player": "player"
+          }
+        },
+        {
+          "id": "addPoints",
+          "type": "Add",
+          "inputs": {
+            "a": "node:getPlayer:player",
+            "b": "param:points"
+          },
+          "outputs": {
+            "result": "newScore"
+          }
+        },
+        {
+          "id": "notify",
+          "type": "EmitToAll",
+          "inputs": {
+            "eventType": {"constant": "ScoreUpdated"},
+            "payload": {
+              "playerID": "param:playerID",
+              "newScore": "node:addPoints:newScore"
+            }
+          },
+          "outputs": {}
+        }
+      ],
+      "flow": [
+        {"from": "start", "to": "getPlayer"},
+        {"from": "getPlayer", "to": "addPoints"},
+        {"from": "addPoints", "to": "notify"}
+      ]
+    }
+  ]
+}
