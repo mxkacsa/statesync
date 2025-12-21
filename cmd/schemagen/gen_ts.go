@@ -19,6 +19,11 @@ func tsDefaultValue(f *FieldDef) string {
 		return "{}"
 	}
 
+	// Auto-generated UUID
+	if f.AutoGen == AutoGenUUID {
+		return "crypto.randomUUID()"
+	}
+
 	// No default source -> zero value
 	if f.DefaultSource == "" || f.DefaultSource == DefaultNone {
 		return tsZeroValue(f.Type)
@@ -37,7 +42,7 @@ func tsDefaultValue(f *FieldDef) string {
 
 	// Literal value
 	switch pt.BaseType {
-	case "string":
+	case "string", "uuid":
 		return fmt.Sprintf("'%s'", f.DefaultValue)
 	case "bool":
 		return f.DefaultValue
@@ -58,7 +63,7 @@ func tsZeroValue(t string) string {
 	}
 
 	switch pt.BaseType {
-	case "string":
+	case "string", "uuid":
 		return "''"
 	case "bool":
 		return "false"

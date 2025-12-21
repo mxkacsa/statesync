@@ -219,7 +219,7 @@ func (p *Parser) parseTypeFromLine(line string, id int) (*TypeDef, error) {
 }
 
 func (p *Parser) parseField(line string) (*FieldDef, error) {
-	// Parse: "name  type  @key(ID) @view(owner) @default(value)"
+	// Parse: "name  type  @key(ID) @view(owner) @default(value) @auto(uuid)"
 	// Split by whitespace first
 	parts := strings.Fields(line)
 	if len(parts) < 2 {
@@ -231,6 +231,7 @@ func (p *Parser) parseField(line string) (*FieldDef, error) {
 		Type:          parts[1],
 		Views:         []string{}, // Default: visible to all
 		DefaultSource: DefaultNone,
+		AutoGen:       AutoGenNone,
 	}
 
 	// Parse annotations
@@ -283,6 +284,31 @@ func (p *Parser) parseField(line string) (*FieldDef, error) {
 				} else {
 					field.DefaultValue = value
 				}
+			}
+			continue
+		}
+
+		if strings.HasPrefix(ann, "@auto(") {
+			end := strings.Index(ann, ")")
+			if end == -1 {
+				return nil, p.errorf("invalid @auto annotation: %s", ann)
+			}
+			autoType := strings.TrimSpace(ann[6:end])
+			switch autoType {
+			case "uuid":
+				field.AutoGen = AutoGenUUID
+			default:
+				return nil, p.errorf("unknown @auto type: %s (supported: uuid)", autoType)
+			}
+			continue
+		}
+
+		if ann == "@auto" {
+			// Shorthand: if field type is uuid, auto-generate UUID
+			if field.Type == "uuid" {
+				field.AutoGen = AutoGenUUID
+			} else {
+				return nil, p.errorf("@auto without type requires uuid field type, got: %s", field.Type)
 			}
 			continue
 		}

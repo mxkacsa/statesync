@@ -20,12 +20,21 @@ type TypeDef struct {
 	Fields []*FieldDef `json:"fields"`
 }
 
+// AutoGenType specifies how a field value is automatically generated
+type AutoGenType string
+
+const (
+	AutoGenNone AutoGenType = ""     // No auto-generation
+	AutoGenUUID AutoGenType = "uuid" // Generate UUID v4
+)
+
 // FieldDef represents a field definition
 type FieldDef struct {
-	Name     string `json:"name"`
-	Type     string `json:"type"`
-	Key      string `json:"key,omitempty"`      // For arrays: key field for tracking
-	Optional bool   `json:"optional,omitempty"` // Pointer/nullable
+	Name     string      `json:"name"`
+	Type     string      `json:"type"`
+	Key      string      `json:"key,omitempty"`      // For arrays: key field for tracking
+	Optional bool        `json:"optional,omitempty"` // Pointer/nullable
+	AutoGen  AutoGenType `json:"autoGen,omitempty"`  // Auto-generation type (e.g., "uuid")
 }
 
 // SchemaContext provides schema-aware type information for code generation
@@ -143,7 +152,7 @@ func IsPrimitiveType(t string) bool {
 	case "int8", "int16", "int32", "int64", "int",
 		"uint8", "uint16", "uint32", "uint64", "uint",
 		"float32", "float64",
-		"string", "bool", "bytes", "[]byte":
+		"string", "bool", "bytes", "[]byte", "uuid":
 		return true
 	}
 	return false

@@ -43,15 +43,24 @@ const (
 	DefaultConfig  DefaultSource = "config"  // From config: @default(config:GameConfig.Speed)
 )
 
+// AutoGenType specifies how a field value is automatically generated
+type AutoGenType string
+
+const (
+	AutoGenNone AutoGenType = ""     // No auto-generation
+	AutoGenUUID AutoGenType = "uuid" // Generate UUID v4
+)
+
 // FieldDef represents a field definition
 type FieldDef struct {
 	Name          string        `json:"name"`
-	Type          string        `json:"type"`                    // int32, string, []Player, map[string]int, etc.
+	Type          string        `json:"type"`                    // int32, string, uuid, []Player, map[string]int, etc.
 	Key           string        `json:"key,omitempty"`           // For arrays: key field for tracking
 	Views         []string      `json:"views,omitempty"`         // Which views can see this field
 	Optional      bool          `json:"optional,omitempty"`      // Pointer/nullable
 	DefaultSource DefaultSource `json:"defaultSource,omitempty"` // Where default comes from
 	DefaultValue  string        `json:"defaultValue,omitempty"`  // Literal value or config path (e.g., "GameConfig.Speed")
+	AutoGen       AutoGenType   `json:"autoGen,omitempty"`       // Auto-generation type (e.g., "uuid")
 }
 
 // ViewDef represents a view/projection definition
@@ -120,7 +129,7 @@ func IsPrimitive(t string) bool {
 	case "int8", "int16", "int32", "int64", "int",
 		"uint8", "uint16", "uint32", "uint64", "uint",
 		"float32", "float64",
-		"string", "bool", "bytes":
+		"string", "bool", "bytes", "uuid":
 		return true
 	}
 	return false
@@ -143,6 +152,8 @@ func GoType(t string) string {
 	switch pt.BaseType {
 	case "bytes":
 		return "[]byte"
+	case "uuid":
+		return "string" // UUID is stored as string in Go
 	default:
 		return pt.BaseType
 	}
@@ -167,7 +178,7 @@ func TSType(t string) string {
 		return "number"
 	case "int64", "uint64", "int", "uint":
 		return "number" // or bigint for large values
-	case "string":
+	case "string", "uuid":
 		return "string"
 	case "bool":
 		return "boolean"
@@ -210,7 +221,7 @@ func FieldTypeEnum(t string) string {
 		return "TypeFloat32"
 	case "float64":
 		return "TypeFloat64"
-	case "string":
+	case "string", "uuid":
 		return "TypeString"
 	case "bool":
 		return "TypeBool"
@@ -253,7 +264,7 @@ func TSFieldType(t string) string {
 		return "FieldType.Float32"
 	case "float64":
 		return "FieldType.Float64"
-	case "string":
+	case "string", "uuid":
 		return "FieldType.String"
 	case "bool":
 		return "FieldType.Bool"

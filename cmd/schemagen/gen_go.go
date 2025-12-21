@@ -31,7 +31,7 @@ func encoderMethod(typ string) string {
 		return "WriteFloat32"
 	case "float64":
 		return "WriteFloat64"
-	case "string":
+	case "string", "uuid":
 		return "WriteString"
 	case "bool":
 		return "WriteBool"
@@ -51,6 +51,11 @@ func goDefaultValue(f *FieldDef) string {
 		return "nil"
 	}
 
+	// Auto-generated UUID
+	if f.AutoGen == AutoGenUUID {
+		return "uuid.New().String()"
+	}
+
 	// No default source -> zero value
 	if f.DefaultSource == "" || f.DefaultSource == DefaultNone {
 		return goZeroValue(f.Type)
@@ -67,13 +72,25 @@ func goDefaultValue(f *FieldDef) string {
 
 	// Literal value
 	switch pt.BaseType {
-	case "string":
+	case "string", "uuid":
 		return fmt.Sprintf("%q", f.DefaultValue)
 	case "bool":
 		return f.DefaultValue
 	default:
 		return f.DefaultValue
 	}
+}
+
+// hasAutoGenUUID checks if any field uses auto-generated UUID
+func hasAutoGenUUID(schema *SchemaFile) bool {
+	for _, t := range schema.Types {
+		for _, f := range t.Fields {
+			if f.AutoGen == AutoGenUUID {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // goZeroValue returns the Go zero value for a type
@@ -85,7 +102,7 @@ func goZeroValue(t string) string {
 	}
 
 	switch pt.BaseType {
-	case "string":
+	case "string", "uuid":
 		return `""`
 	case "bool":
 		return "false"
@@ -136,6 +153,7 @@ func GenerateGo(schema *SchemaFile) ([]byte, error) {
 		"goDefaultValue":    goDefaultValue,
 		"goZeroValue":       goZeroValue,
 		"hasConfigDefaults": hasConfigDefaults,
+		"hasAutoGenUUID":    hasAutoGenUUID,
 		"getRootSchemas":    getRootSchemas,
 		"isRoot":            func(t *TypeDef) bool { return t.Role == RoleRoot },
 		"isActiveByDefault": func(t *TypeDef) bool { return t.DefaultState == "active" },
@@ -166,7 +184,9 @@ package {{.Package}}
 import (
 	"fmt"
 	"sync"
-
+{{if hasAutoGenUUID .}}
+	"github.com/google/uuid"
+{{end}}
 	"github.com/mxkacsa/statesync"
 )
 
