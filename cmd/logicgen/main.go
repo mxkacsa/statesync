@@ -1,120 +1,168 @@
-// logicgen generates Go code from node-based logic graphs.
+// Package main provides the CLI for LogicGen v2 - a declarative rule engine.
 //
 // Usage:
 //
-//	logicgen -input=game_logic.json -output=game_logic_gen.go
+//	logicgenv2 -input rules.json -output rules_gen.go -package game -state GameState
+//	logicgenv2 -validate -input rules.json
+//	logicgenv2 -run -input rules.json -state state.json
 //
-// Node graph format:
-//
-//	{
-//	  "version": "1.0",
-//	  "package": "main",
-//	  "handlers": [
-//	    {
-//	      "name": "OnCardPlayed",
-//	      "event": "CardPlayed",
-//	      "parameters": [
-//	        {"name": "playerID", "type": "string"},
-//	        {"name": "cardID", "type": "int32"}
-//	      ],
-//	      "nodes": [...],
-//	      "flow": [...]
-//	    }
-//	  ]
-//	}
+// V2 uses a declarative rule format with:
+//   - Triggers: OnTick, OnEvent, OnChange, Distance, Timer, Condition
+//   - Selectors: All, Filter, Single, Related, Nearest, Farthest
+//   - Views: Sum, Max, Min, Count, Avg, GroupBy, Sort, Distance
+//   - Effects: Set, Increment, Append, Remove, Emit, Spawn, Transform
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
+	"time"
+
+	"github.com/mxkacsa/statesync/cmd/logicgen/ast"
+	"github.com/mxkacsa/statesync/cmd/logicgen/eval"
+	"github.com/mxkacsa/statesync/cmd/logicgen/gen"
+	"github.com/mxkacsa/statesync/cmd/logicgen/parse"
 )
 
 var (
-	inputFile  = flag.String("input", "", "input node graph JSON file (required)")
-	schemaFile = flag.String("schema", "", "schema JSON file (required for type-safe generation)")
-	outputFile = flag.String("output", "", "output Go file (required)")
-	validate   = flag.Bool("validate", false, "only validate, don't generate")
-	debugMode  = flag.Bool("debug", false, "generate debug hooks for tracing (use with -tags debug)")
+	inputFile   = flag.String("input", "", "Input rules JSON file or directory (required)")
+	outputFile  = flag.String("output", "", "Output Go file for code generation")
+	packageName = flag.String("package", "generated", "Package name for generated code")
+	stateType   = flag.String("state", "State", "State struct type name")
+	validate    = flag.Bool("validate", false, "Only validate rules, don't generate")
+	run         = flag.Bool("run", false, "Run rules interactively (for testing)")
+	stateFile   = flag.String("statefile", "", "Initial state JSON file (for -run mode)")
+	tickRate    = flag.Duration("tick", 100*time.Millisecond, "Tick rate for -run mode")
+	strict      = flag.Bool("strict", false, "Use strict validation")
 )
 
 func main() {
 	flag.Parse()
 
 	if *inputFile == "" {
-		fmt.Fprintln(os.Stderr, "logicgen: -input flag is required")
+		fmt.Fprintln(os.Stderr, "logicgenv2: -input flag is required")
 		flag.Usage()
 		os.Exit(1)
 	}
 
-	if !*validate && *outputFile == "" {
-		fmt.Fprintln(os.Stderr, "logicgen: -output flag is required (unless -validate is set)")
-		flag.Usage()
-		os.Exit(1)
+	// Parse rules
+	parser := parse.NewParser()
+	if *strict {
+		parser.AddValidator(parse.StrictValidator())
 	}
 
-	if *schemaFile == "" {
-		fmt.Fprintln(os.Stderr, "logicgen: -schema flag is required for type-safe generation")
-		flag.Usage()
-		os.Exit(1)
-	}
+	var ruleSet *ast.RuleSet
+	var err error
 
-	// Read input file
-	data, err := os.ReadFile(*inputFile)
+	// Check if input is a directory
+	fi, err := os.Stat(*inputFile)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "logicgen: cannot read input file: %v\n", err)
+		fmt.Fprintf(os.Stderr, "logicgenv2: cannot access input: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Parse node graph
-	var nodeGraph NodeGraph
-	if err := json.Unmarshal(data, &nodeGraph); err != nil {
-		fmt.Fprintf(os.Stderr, "logicgen: cannot parse JSON: %v\n", err)
+	if fi.IsDir() {
+		ruleSet, err = parser.ParseDirectory(*inputFile)
+	} else {
+		ruleSet, err = parser.ParseFile(*inputFile)
+	}
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "logicgenv2: parse error: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Set default package
-	if nodeGraph.Package == "" {
-		nodeGraph.Package = "generated"
-	}
+	fmt.Printf("Parsed %d rules\n", len(ruleSet.Rules))
 
-	// Validate
-	validator := NewValidator(&nodeGraph)
-	if err := validator.Validate(); err != nil {
-		fmt.Fprintf(os.Stderr, "logicgen: validation failed: %v\n", err)
-		os.Exit(1)
-	}
-
+	// Validate only mode
 	if *validate {
 		fmt.Println("Validation passed!")
+		for _, rule := range ruleSet.Rules {
+			status := "enabled"
+			if !rule.IsEnabled() {
+				status = "disabled"
+			}
+			fmt.Printf("  - %s (priority: %d, %s)\n", rule.Name, rule.GetPriority(), status)
+		}
 		return
 	}
 
-	// Load schema
-	schemaCtx, err := LoadSchema(*schemaFile)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "logicgen: cannot load schema: %v\n", err)
+	// Run mode - execute rules interactively
+	if *run {
+		if err := runInteractive(ruleSet); err != nil {
+			fmt.Fprintf(os.Stderr, "logicgenv2: run error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Generate mode
+	if *outputFile == "" {
+		fmt.Fprintln(os.Stderr, "logicgenv2: -output flag is required for code generation")
+		flag.Usage()
 		os.Exit(1)
 	}
 
-	// Generate code
-	generator := NewCodeGeneratorWithDebug(&nodeGraph, schemaCtx, *debugMode)
-	code, err := generator.Generate()
+	generator := gen.NewGenerator(*packageName, *stateType)
+	code, err := generator.Generate(ruleSet)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "logicgen: code generation failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "logicgenv2: generation error: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Write output
 	if err := os.WriteFile(*outputFile, code, 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "logicgen: cannot write output file: %v\n", err)
+		fmt.Fprintf(os.Stderr, "logicgenv2: cannot write output: %v\n", err)
 		os.Exit(1)
 	}
 
-	if *debugMode {
-		fmt.Printf("Generated (debug mode): %s\n", *outputFile)
+	fmt.Printf("Generated: %s\n", *outputFile)
+}
+
+// runInteractive runs the rules in an interactive test mode
+func runInteractive(ruleSet *ast.RuleSet) error {
+	// Create a simple test state
+	var state interface{}
+
+	if *stateFile != "" {
+		data, err := os.ReadFile(*stateFile)
+		if err != nil {
+			return fmt.Errorf("read state file: %w", err)
+		}
+		if err := json.Unmarshal(data, &state); err != nil {
+			return fmt.Errorf("parse state file: %w", err)
+		}
 	} else {
-		fmt.Printf("Generated: %s\n", *outputFile)
+		// Create default empty state
+		state = &map[string]interface{}{}
+	}
+
+	// Create engine
+	engine := eval.NewEngine(state, ruleSet.Rules)
+	engine.SetTickRate(*tickRate)
+
+	ctx := context.Background()
+
+	fmt.Println("Running rules engine...")
+	fmt.Printf("Tick rate: %v\n", *tickRate)
+	fmt.Println("Press Ctrl+C to stop")
+	fmt.Println()
+
+	ticker := time.NewTicker(*tickRate)
+	defer ticker.Stop()
+
+	for tick := uint64(1); ; tick++ {
+		select {
+		case <-ticker.C:
+			if err := engine.Tick(ctx); err != nil {
+				fmt.Printf("Tick %d error: %v\n", tick, err)
+			} else if tick%10 == 0 {
+				fmt.Printf("Tick %d completed\n", tick)
+			}
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 }
