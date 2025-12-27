@@ -84,16 +84,16 @@ type templateData struct {
 
 // ruleData holds processed rule data
 type ruleData struct {
-	Name         string
-	FuncName     string
-	Description  string
-	Priority     int
-	TriggerCode  string
-	SelectorCode string
-	ViewsCode    string
-	EffectsCode  string
-	HasSelector  bool
-	HasViews     bool
+	Name        string
+	FuncName    string
+	Description string
+	Priority    int
+	TriggerCode string
+	ViewsCode   string
+	EffectsCode string
+	HasViews    bool
+	TriggerType string // "tick", "event", "timer", "condition"
+	EventName   string // For event-based triggers
 }
 
 // processRule processes a rule into template data
@@ -103,26 +103,31 @@ func (g *Generator) processRule(rule *ast.Rule, data *templateData) (*ruleData, 
 		FuncName:    toFuncName(rule.Name),
 		Description: rule.Description,
 		Priority:    rule.GetPriority(),
-		HasSelector: rule.Selector != nil,
 		HasViews:    len(rule.Views) > 0,
+		TriggerType: "tick", // default
 	}
 
-	// Generate trigger code
+	// Determine trigger type and generate code
 	if rule.Trigger != nil {
+		switch rule.Trigger.Type {
+		case ast.TriggerTypeOnEvent:
+			rd.TriggerType = "event"
+			rd.EventName = rule.Trigger.Event
+		case ast.TriggerTypeOnTick:
+			rd.TriggerType = "tick"
+		case ast.TriggerTypeTimer:
+			rd.TriggerType = "timer"
+		case ast.TriggerTypeCondition:
+			rd.TriggerType = "condition"
+		case ast.TriggerTypeDistance:
+			rd.TriggerType = "tick" // Distance triggers run on tick
+		}
+
 		code, err := g.generateTriggerCode(rule.Trigger, data)
 		if err != nil {
 			return nil, fmt.Errorf("trigger: %w", err)
 		}
 		rd.TriggerCode = code
-	}
-
-	// Generate selector code
-	if rule.Selector != nil {
-		code, err := g.generateSelectorCode(rule.Selector, data)
-		if err != nil {
-			return nil, fmt.Errorf("selector: %w", err)
-		}
-		rd.SelectorCode = code
 	}
 
 	// Generate views code
@@ -136,7 +141,7 @@ func (g *Generator) processRule(rule *ast.Rule, data *templateData) (*ruleData, 
 
 	// Generate effects code
 	if len(rule.Effects) > 0 {
-		code, err := g.generateEffectsCode(rule.Effects, data)
+		code, err := g.generateEffectsCode(rule.Effects, rule.Views, data)
 		if err != nil {
 			return nil, fmt.Errorf("effects: %w", err)
 		}
@@ -167,12 +172,14 @@ func (g *Generator) generateTriggerCode(trigger *ast.Trigger, data *templateData
 
 	case ast.TriggerTypeDistance:
 		data.Imports["math"] = true
+		fromField := pathToField(ast.Path(trigger.From))
+		toField := pathToField(ast.Path(trigger.To))
 		fmt.Fprintf(&buf, `// Distance trigger
-		fromPos := ctx.ResolvePath(%q)
-		toPos := ctx.ResolvePath(%q)
+		fromPos := state.%s
+		toPos := state.%s
 		dist := haversineDistance(fromPos, toPos)
 		if !(dist %s %v) { return nil }`,
-			trigger.From, trigger.To, trigger.Operator, trigger.Value)
+			fromField, toField, trigger.Operator, trigger.Value)
 
 	case ast.TriggerTypeCondition:
 		if trigger.Condition != nil {
@@ -187,122 +194,97 @@ func (g *Generator) generateTriggerCode(trigger *ast.Trigger, data *templateData
 	return buf.String(), nil
 }
 
-// generateSelectorCode generates code for a selector
-func (g *Generator) generateSelectorCode(selector *ast.Selector, data *templateData) (string, error) {
-	var buf bytes.Buffer
-
-	switch selector.Type {
-	case ast.SelectorTypeAll:
-		fmt.Fprintf(&buf, "entities := state.%s", selector.Entity)
-
-	case ast.SelectorTypeFilter:
-		fmt.Fprintf(&buf, "var entities []%s\n", selector.Entity)
-		fmt.Fprintf(&buf, "for _, e := range state.%s {\n", selector.Entity)
-		if selector.Where != nil {
-			condCode := g.generateWhereCode(selector.Where, "e")
-			fmt.Fprintf(&buf, "  if %s {\n    entities = append(entities, e)\n  }\n", condCode)
-		} else {
-			fmt.Fprintf(&buf, "  entities = append(entities, e)\n")
-		}
-		fmt.Fprintf(&buf, "}")
-
-	case ast.SelectorTypeSingle:
-		fmt.Fprintf(&buf, "var entities []%s\n", selector.Entity)
-		fmt.Fprintf(&buf, "targetID := ctx.Resolve(%q)\n", selector.ID)
-		fmt.Fprintf(&buf, "for _, e := range state.%s {\n", selector.Entity)
-		fmt.Fprintf(&buf, "  if e.ID == targetID {\n")
-		fmt.Fprintf(&buf, "    entities = append(entities, e)\n    break\n  }\n}")
-
-	case ast.SelectorTypeNearest:
-		data.Imports["sort"] = true
-		data.Imports["math"] = true
-		fmt.Fprintf(&buf, `// Select nearest entities
-		origin := ctx.Resolve(%q)
-		type entityDist struct { e %s; dist float64 }
-		var withDist []entityDist
-		for _, e := range state.%s {
-			dist := haversineDistance(origin, e.Position)
-			if dist <= %v {
-				withDist = append(withDist, entityDist{e, dist})
-			}
-		}
-		sort.Slice(withDist, func(i, j int) bool { return withDist[i].dist < withDist[j].dist })
-		entities := make([]%s, 0, %d)
-		for i := 0; i < len(withDist) && i < %d; i++ {
-			entities = append(entities, withDist[i].e)
-		}`,
-			selector.Origin, selector.Entity, selector.Entity,
-			selector.MaxDistance, selector.Entity, selector.Limit, selector.Limit)
-	}
-
-	return buf.String(), nil
-}
-
 // generateViewsCode generates code for views
 func (g *Generator) generateViewsCode(views map[string]*ast.View, data *templateData) (string, error) {
 	var buf bytes.Buffer
 
 	for name, view := range views {
-		switch view.Type {
-		case ast.ViewTypeCount:
-			fmt.Fprintf(&buf, "views[%q] = len(entities)\n", name)
+		// Generate view evaluation code
+		fmt.Fprintf(&buf, "// View: %s\n", name)
+		fmt.Fprintf(&buf, "entities_%s := state.%s\n", name, view.Source)
 
-		case ast.ViewTypeSum:
-			fmt.Fprintf(&buf, "var sum_%s float64\n", name)
-			fmt.Fprintf(&buf, "for _, e := range entities {\n")
-			fmt.Fprintf(&buf, "  sum_%s += float64(e.%s)\n", name, pathToField(view.Field))
-			fmt.Fprintf(&buf, "}\nviews[%q] = sum_%s\n", name, name)
+		// Apply pipeline operations
+		for i, op := range view.Pipeline {
+			switch op.Type {
+			case ast.ViewOpFilter:
+				fmt.Fprintf(&buf, "var filtered_%s_%d []interface{}\n", name, i)
+				fmt.Fprintf(&buf, "for _, e := range entities_%s {\n", name)
+				if op.Where != nil {
+					condCode := g.generateWhereCode(op.Where, "e")
+					fmt.Fprintf(&buf, "  if %s {\n    filtered_%s_%d = append(filtered_%s_%d, e)\n  }\n", condCode, name, i, name, i)
+				}
+				fmt.Fprintf(&buf, "}\n")
+				fmt.Fprintf(&buf, "entities_%s = filtered_%s_%d\n", name, name, i)
 
-		case ast.ViewTypeMax:
-			data.Imports["math"] = true
-			fmt.Fprintf(&buf, "var max_%s float64 = math.Inf(-1)\n", name)
-			fmt.Fprintf(&buf, "for _, e := range entities {\n")
-			fmt.Fprintf(&buf, "  if v := float64(e.%s); v > max_%s { max_%s = v }\n",
-				pathToField(view.Field), name, name)
-			fmt.Fprintf(&buf, "}\nviews[%q] = max_%s\n", name, name)
+			case ast.ViewOpCount:
+				fmt.Fprintf(&buf, "views[%q] = len(entities_%s)\n", name, name)
 
-		case ast.ViewTypeMin:
-			data.Imports["math"] = true
-			fmt.Fprintf(&buf, "var min_%s float64 = math.Inf(1)\n", name)
-			fmt.Fprintf(&buf, "for _, e := range entities {\n")
-			fmt.Fprintf(&buf, "  if v := float64(e.%s); v < min_%s { min_%s = v }\n",
-				pathToField(view.Field), name, name)
-			fmt.Fprintf(&buf, "}\nviews[%q] = min_%s\n", name, name)
+			case ast.ViewOpSum:
+				fmt.Fprintf(&buf, "var sum_%s float64\n", name)
+				fmt.Fprintf(&buf, "for _, e := range entities_%s {\n", name)
+				fmt.Fprintf(&buf, "  sum_%s += float64(e.%s)\n", name, pathToField(op.Field))
+				fmt.Fprintf(&buf, "}\nviews[%q] = sum_%s\n", name, name)
 
-		case ast.ViewTypeAvg:
-			fmt.Fprintf(&buf, "var sum_%s float64\n", name)
-			fmt.Fprintf(&buf, "for _, e := range entities {\n")
-			fmt.Fprintf(&buf, "  sum_%s += float64(e.%s)\n", name, pathToField(view.Field))
-			fmt.Fprintf(&buf, "}\nif len(entities) > 0 { views[%q] = sum_%s / float64(len(entities)) }\n", name, name)
+			case ast.ViewOpMax:
+				data.Imports["math"] = true
+				fmt.Fprintf(&buf, "var max_%s float64 = math.Inf(-1)\n", name)
+				fmt.Fprintf(&buf, "for _, e := range entities_%s {\n", name)
+				fmt.Fprintf(&buf, "  if v := float64(e.%s); v > max_%s { max_%s = v }\n",
+					pathToField(op.Field), name, name)
+				fmt.Fprintf(&buf, "}\nviews[%q] = max_%s\n", name, name)
+
+			case ast.ViewOpMin:
+				data.Imports["math"] = true
+				fmt.Fprintf(&buf, "var min_%s float64 = math.Inf(1)\n", name)
+				fmt.Fprintf(&buf, "for _, e := range entities_%s {\n", name)
+				fmt.Fprintf(&buf, "  if v := float64(e.%s); v < min_%s { min_%s = v }\n",
+					pathToField(op.Field), name, name)
+				fmt.Fprintf(&buf, "}\nviews[%q] = min_%s\n", name, name)
+
+			case ast.ViewOpAvg:
+				fmt.Fprintf(&buf, "var sum_%s float64\n", name)
+				fmt.Fprintf(&buf, "for _, e := range entities_%s {\n", name)
+				fmt.Fprintf(&buf, "  sum_%s += float64(e.%s)\n", name, pathToField(op.Field))
+				fmt.Fprintf(&buf, "}\nif len(entities_%s) > 0 { views[%q] = sum_%s / float64(len(entities_%s)) }\n",
+					name, name, name, name)
+			}
 		}
+
+		// Store final result
+		fmt.Fprintf(&buf, "views[%q] = entities_%s\n", name, name)
 	}
 
 	return buf.String(), nil
 }
 
 // generateEffectsCode generates code for effects
-func (g *Generator) generateEffectsCode(effects []*ast.Effect, data *templateData) (string, error) {
+func (g *Generator) generateEffectsCode(effects []*ast.Effect, views map[string]*ast.View, data *templateData) (string, error) {
 	var buf bytes.Buffer
 
-	fmt.Fprintf(&buf, "for i, entity := range entities {\n")
-	fmt.Fprintf(&buf, "  _ = i\n") // Avoid unused variable
-
 	for _, effect := range effects {
-		code, err := g.generateEffectCode(effect, data)
+		code, err := g.generateEffectCode(effect, views, data)
 		if err != nil {
 			return "", err
 		}
 		buf.WriteString(code)
 	}
 
-	fmt.Fprintf(&buf, "}")
-
 	return buf.String(), nil
 }
 
 // generateEffectCode generates code for a single effect
-func (g *Generator) generateEffectCode(effect *ast.Effect, data *templateData) (string, error) {
+func (g *Generator) generateEffectCode(effect *ast.Effect, views map[string]*ast.View, data *templateData) (string, error) {
 	var buf bytes.Buffer
+
+	// Get targets
+	targetsVar := "state"
+	if effect.Targets != nil {
+		if viewName, ok := effect.Targets.(string); ok {
+			targetsVar = fmt.Sprintf("views[%q].([]interface{})", viewName)
+			fmt.Fprintf(&buf, "for i, entity := range %s {\n", targetsVar)
+			fmt.Fprintf(&buf, "  _ = i\n")
+		}
+	}
 
 	switch effect.Type {
 	case ast.EffectTypeSet:
@@ -311,7 +293,11 @@ func (g *Generator) generateEffectCode(effect *ast.Effect, data *templateData) (
 		if err != nil {
 			return "", err
 		}
-		fmt.Fprintf(&buf, "  entity.%s = %s\n", field, valueCode)
+		if effect.Targets != nil {
+			fmt.Fprintf(&buf, "  entity.%s = %s\n", field, valueCode)
+		} else {
+			fmt.Fprintf(&buf, "state.%s = %s\n", field, valueCode)
+		}
 
 	case ast.EffectTypeIncrement:
 		field := pathToField(effect.Path)
@@ -319,7 +305,11 @@ func (g *Generator) generateEffectCode(effect *ast.Effect, data *templateData) (
 		if err != nil {
 			return "", err
 		}
-		fmt.Fprintf(&buf, "  entity.%s += %s\n", field, valueCode)
+		if effect.Targets != nil {
+			fmt.Fprintf(&buf, "  entity.%s += %s\n", field, valueCode)
+		} else {
+			fmt.Fprintf(&buf, "state.%s += %s\n", field, valueCode)
+		}
 
 	case ast.EffectTypeDecrement:
 		field := pathToField(effect.Path)
@@ -327,66 +317,27 @@ func (g *Generator) generateEffectCode(effect *ast.Effect, data *templateData) (
 		if err != nil {
 			return "", err
 		}
-		fmt.Fprintf(&buf, "  entity.%s -= %s\n", field, valueCode)
-
-	case ast.EffectTypeTransform:
-		if effect.Transform != nil {
-			field := pathToField(effect.Path)
-			transformCode, err := g.generateTransformCode(effect.Transform, data)
-			if err != nil {
-				return "", err
-			}
-			fmt.Fprintf(&buf, "  entity.%s = %s\n", field, transformCode)
+		if effect.Targets != nil {
+			fmt.Fprintf(&buf, "  entity.%s -= %s\n", field, valueCode)
+		} else {
+			fmt.Fprintf(&buf, "state.%s -= %s\n", field, valueCode)
 		}
 
 	case ast.EffectTypeEmit:
-		fmt.Fprintf(&buf, "  // Emit event: %s\n", effect.Event)
-		fmt.Fprintf(&buf, "  ctx.Emit(%q, map[string]interface{}{\n", effect.Event)
+		fmt.Fprintf(&buf, "// Emit event: %s\n", effect.Event)
+		fmt.Fprintf(&buf, "ctx.Emit(%q, map[string]interface{}{\n", effect.Event)
 		for k, v := range effect.Payload {
 			valueCode, _ := g.generateValueCode(v)
-			fmt.Fprintf(&buf, "    %q: %s,\n", k, valueCode)
+			fmt.Fprintf(&buf, "  %q: %s,\n", k, valueCode)
 		}
-		fmt.Fprintf(&buf, "  })\n")
+		fmt.Fprintf(&buf, "})\n")
+	}
+
+	if effect.Targets != nil {
+		fmt.Fprintf(&buf, "}\n")
 	}
 
 	return buf.String(), nil
-}
-
-// generateTransformCode generates code for a transform
-func (g *Generator) generateTransformCode(t *ast.Transform, data *templateData) (string, error) {
-	switch t.Type {
-	case ast.TransformTypeMoveTowards:
-		data.Imports["math"] = true
-		return fmt.Sprintf("moveTowards(entity.%s, %s, %v * float64(ctx.DeltaTime.Milliseconds()) / 1000.0)",
-			pathToField(ast.Path(fmt.Sprintf("%v", t.Current))),
-			g.generatePathOrValue(t.Target),
-			t.Speed), nil
-
-	case ast.TransformTypeAdd:
-		left, _ := g.generateValueCode(t.Left)
-		right, _ := g.generateValueCode(t.Right)
-		return fmt.Sprintf("(%s + %s)", left, right), nil
-
-	case ast.TransformTypeSubtract:
-		left, _ := g.generateValueCode(t.Left)
-		right, _ := g.generateValueCode(t.Right)
-		return fmt.Sprintf("(%s - %s)", left, right), nil
-
-	case ast.TransformTypeMultiply:
-		left, _ := g.generateValueCode(t.Left)
-		right, _ := g.generateValueCode(t.Right)
-		return fmt.Sprintf("(%s * %s)", left, right), nil
-
-	case ast.TransformTypeClamp:
-		data.Imports["math"] = true
-		value, _ := g.generateValueCode(t.Value)
-		min, _ := g.generateValueCode(t.Min)
-		max, _ := g.generateValueCode(t.Max)
-		return fmt.Sprintf("math.Max(%s, math.Min(%s, %s))", min, max, value), nil
-
-	default:
-		return fmt.Sprintf("/* TODO: transform %s */", t.Type), nil
-	}
 }
 
 // generateValueCode generates code for a value
@@ -395,6 +346,9 @@ func (g *Generator) generateValueCode(v interface{}) (string, error) {
 	case string:
 		if strings.HasPrefix(val, "$.") {
 			return "entity." + pathToField(ast.Path(val)), nil
+		}
+		if strings.HasPrefix(val, "self.") {
+			return "entity." + val[5:], nil
 		}
 		if strings.HasPrefix(val, "view:") {
 			return fmt.Sprintf("views[%q]", val[5:]), nil
@@ -414,12 +368,6 @@ func (g *Generator) generateValueCode(v interface{}) (string, error) {
 	default:
 		return fmt.Sprintf("%#v", v), nil
 	}
-}
-
-// generatePathOrValue generates code for a path or literal value
-func (g *Generator) generatePathOrValue(v interface{}) string {
-	code, _ := g.generateValueCode(v)
-	return code
 }
 
 // generateExpressionCode generates code for an expression
@@ -487,6 +435,9 @@ func pathToField(path ast.Path) string {
 	s := string(path)
 	if strings.HasPrefix(s, "$.") {
 		s = s[2:]
+	}
+	if strings.HasPrefix(s, "self.") {
+		s = s[5:]
 	}
 	return s
 }

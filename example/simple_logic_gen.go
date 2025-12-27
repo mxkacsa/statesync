@@ -1,7 +1,8 @@
-package example
+package main
 
 import (
 	"fmt"
+
 	"github.com/mxkacsa/statesync"
 )
 
@@ -9,18 +10,24 @@ import (
 func OnScoreUpdate(session *statesync.TrackedSession[*GameState, any, string], playerID string, points int64) error {
 	// Node: getPlayer (GetPlayer)
 	state := session.State().Get()
-	var getPlayer_player *Player
-	for i := range state.Players {
-		if state.Players[i].ID == playerID {
-			getPlayer_player = &state.Players[i]
+	playerIndex := -1
+	for i := 0; i < state.PlayersLen(); i++ {
+		player := state.PlayersAt(i)
+		if player.ID() == playerID {
+			playerIndex = i
 			break
 		}
 	}
-	if getPlayer_player == nil {
+	if playerIndex < 0 {
 		return fmt.Errorf("player not found: %s", playerID)
 	}
+
 	// Node: addPoints (Add)
-	addPoints_result := getPlayer_player + points
+	player := state.PlayersAt(playerIndex)
+	newScore := player.Score() + points
+	player.SetScore(newScore)
+	state.UpdatePlayersAt(playerIndex, player)
+
 	// Node: notify (EmitToAll)
 	enc := statesync.NewEventPayloadEncoder()
 	session.Emit("ScoreUpdated", enc.Bytes())

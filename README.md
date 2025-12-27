@@ -4,7 +4,7 @@
 [![codecov](https://codecov.io/gh/mxkacsa/statesync/graph/badge.svg)](https://codecov.io/gh/mxkacsa/statesync)
 [![Go Reference](https://pkg.go.dev/badge/github.com/mxkacsa/statesync.svg)](https://pkg.go.dev/github.com/mxkacsa/statesync)
 
-Deterministic state synchronization for Go with high-performance binary encoding. Features automatic change tracking, reversible effects, player-specific filters, reconnection support, debounced broadcasts, events, and pipeline hooks.
+Replayable state synchronization for Go with high-performance binary encoding. Features automatic change tracking, reversible effects, player-specific filters, reconnection support, debounced broadcasts, events, pipeline hooks, and node-based server logic.
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
@@ -43,7 +43,7 @@ Deterministic state synchronization for Go with high-performance binary encoding
 
 ## Features
 
-- **Deterministic** - Same inputs, same outputs. Always.
+- **Replayable** - All state changes are tracked and can be replayed for debugging, spectating, or analysis
 - **Binary encoding** - High-performance compact binary protocol
 - **Minimal memory** - One previous state, not per-session
 - **Reversible effects** - Add/remove without mutating base state

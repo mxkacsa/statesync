@@ -62,15 +62,17 @@ func TestBatchPlayerPositionUpdate(t *testing.T) {
 				Duration: 500, // 500ms for testing (would be 20 minutes = 1200000 in real game)
 				Repeat:   true,
 			},
-			Selector: &ast.Selector{
-				Type:   ast.SelectorTypeAll,
-				Entity: "Players",
+			Views: map[string]*ast.View{
+				"allPlayers": {
+					Source: "Players",
+				},
 			},
 			Effects: []*ast.Effect{
 				{
-					Type:  ast.EffectTypeSet,
-					Path:  "$.PublicPosition",
-					Value: "$.CurrentPosition", // Copy current to public for each player
+					Type:    ast.EffectTypeSet,
+					Targets: "allPlayers",
+					Path:    "$.PublicPosition",
+					Value:   "self.CurrentPosition", // Copy current to public for each player
 				},
 			},
 		},
@@ -143,15 +145,17 @@ func TestBatchPositionUpdateWithMovement(t *testing.T) {
 				Duration: 300, // 300ms
 				Repeat:   true,
 			},
-			Selector: &ast.Selector{
-				Type:   ast.SelectorTypeAll,
-				Entity: "Players",
+			Views: map[string]*ast.View{
+				"allPlayers": {
+					Source: "Players",
+				},
 			},
 			Effects: []*ast.Effect{
 				{
-					Type:  ast.EffectTypeSet,
-					Path:  "$.PublicPosition",
-					Value: "$.CurrentPosition",
+					Type:    ast.EffectTypeSet,
+					Targets: "allPlayers",
+					Path:    "$.PublicPosition",
+					Value:   "self.CurrentPosition",
 				},
 			},
 		},
@@ -207,15 +211,17 @@ func TestWaitThenBatchUpdate(t *testing.T) {
 				Type:     ast.TriggerTypeWait,
 				Duration: 200, // Fire once after 200ms
 			},
-			Selector: &ast.Selector{
-				Type:   ast.SelectorTypeAll,
-				Entity: "Players",
+			Views: map[string]*ast.View{
+				"allPlayers": {
+					Source: "Players",
+				},
 			},
 			Effects: []*ast.Effect{
 				{
-					Type:  ast.EffectTypeSet,
-					Path:  "$.PublicPosition",
-					Value: "$.CurrentPosition",
+					Type:    ast.EffectTypeSet,
+					Targets: "allPlayers",
+					Path:    "$.PublicPosition",
+					Value:   "self.CurrentPosition",
 				},
 			},
 		},
@@ -266,15 +272,17 @@ func TestScheduleEveryForPositionSync(t *testing.T) {
 				Type:  ast.TriggerTypeSchedule,
 				Every: "200ms",
 			},
-			Selector: &ast.Selector{
-				Type:   ast.SelectorTypeAll,
-				Entity: "Players",
+			Views: map[string]*ast.View{
+				"allPlayers": {
+					Source: "Players",
+				},
 			},
 			Effects: []*ast.Effect{
 				{
-					Type:  ast.EffectTypeSet,
-					Path:  "$.PublicPosition",
-					Value: "$.CurrentPosition",
+					Type:    ast.EffectTypeSet,
+					Targets: "allPlayers",
+					Path:    "$.PublicPosition",
+					Value:   "self.CurrentPosition",
 				},
 			},
 		},

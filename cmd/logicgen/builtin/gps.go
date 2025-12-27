@@ -2,20 +2,12 @@ package builtin
 
 import (
 	"fmt"
-	"math"
+
+	"github.com/mxkacsa/statesync/cmd/logicgen/internal/geo"
 )
 
-const (
-	earthRadiusMeters = 6371000.0
-	degreesToRadians  = math.Pi / 180.0
-	radiansToDegrees  = 180.0 / math.Pi
-)
-
-// GeoPoint represents a GPS coordinate
-type GeoPoint struct {
-	Lat float64 `json:"lat"`
-	Lon float64 `json:"lon"`
-}
+// GeoPoint represents a GPS coordinate (alias for geo.Point for backward compatibility)
+type GeoPoint = geo.Point
 
 func init() {
 	// Register GPS nodes
@@ -233,126 +225,32 @@ func gpsInterpolate(args map[string]interface{}) (interface{}, error) {
 	}, nil
 }
 
-// GPS helper functions
+// GPS helper functions - delegating to shared geo package
 
 func haversineDistance(from, to GeoPoint) float64 {
-	lat1 := from.Lat * degreesToRadians
-	lat2 := to.Lat * degreesToRadians
-	deltaLat := (to.Lat - from.Lat) * degreesToRadians
-	deltaLon := (to.Lon - from.Lon) * degreesToRadians
-
-	a := math.Sin(deltaLat/2)*math.Sin(deltaLat/2) +
-		math.Cos(lat1)*math.Cos(lat2)*
-			math.Sin(deltaLon/2)*math.Sin(deltaLon/2)
-	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
-
-	return earthRadiusMeters * c
+	return geo.HaversineDistance(from, to)
 }
 
 func bearing(from, to GeoPoint) float64 {
-	lat1 := from.Lat * degreesToRadians
-	lat2 := to.Lat * degreesToRadians
-	deltaLon := (to.Lon - from.Lon) * degreesToRadians
-
-	y := math.Sin(deltaLon) * math.Cos(lat2)
-	x := math.Cos(lat1)*math.Sin(lat2) - math.Sin(lat1)*math.Cos(lat2)*math.Cos(deltaLon)
-
-	brng := math.Atan2(y, x) * radiansToDegrees
-	return math.Mod(brng+360, 360)
+	return geo.Bearing(from, to)
 }
 
 func moveTowards(current, target GeoPoint, distance float64) GeoPoint {
-	totalDist := haversineDistance(current, target)
-	if totalDist <= 0 || distance <= 0 {
-		return current
-	}
-	if distance >= totalDist {
-		return target
-	}
-
-	brng := bearing(current, target) * degreesToRadians
-	lat1 := current.Lat * degreesToRadians
-	lon1 := current.Lon * degreesToRadians
-	angularDist := distance / earthRadiusMeters
-
-	lat2 := math.Asin(math.Sin(lat1)*math.Cos(angularDist) +
-		math.Cos(lat1)*math.Sin(angularDist)*math.Cos(brng))
-
-	lon2 := lon1 + math.Atan2(
-		math.Sin(brng)*math.Sin(angularDist)*math.Cos(lat1),
-		math.Cos(angularDist)-math.Sin(lat1)*math.Sin(lat2),
-	)
-
-	return GeoPoint{
-		Lat: lat2 * radiansToDegrees,
-		Lon: lon2 * radiansToDegrees,
-	}
+	return geo.MoveTowards(current, target, distance)
 }
 
 func pointInPolygon(point GeoPoint, polygon []GeoPoint) bool {
-	if len(polygon) < 3 {
-		return false
-	}
-
-	n := len(polygon)
-	inside := false
-
-	j := n - 1
-	for i := 0; i < n; i++ {
-		if ((polygon[i].Lat > point.Lat) != (polygon[j].Lat > point.Lat)) &&
-			(point.Lon < (polygon[j].Lon-polygon[i].Lon)*(point.Lat-polygon[i].Lat)/(polygon[j].Lat-polygon[i].Lat)+polygon[i].Lon) {
-			inside = !inside
-		}
-		j = i
-	}
-
-	return inside
+	return geo.PointInPolygon(point, polygon)
 }
 
-// Conversion helpers
+// Conversion helpers - delegating to shared geo package
 
 func toGeoPoint(v interface{}) (GeoPoint, error) {
-	switch val := v.(type) {
-	case GeoPoint:
-		return val, nil
-	case *GeoPoint:
-		if val == nil {
-			return GeoPoint{}, fmt.Errorf("nil GeoPoint")
-		}
-		return *val, nil
-	case map[string]interface{}:
-		lat, latOk := val["lat"].(float64)
-		lon, lonOk := val["lon"].(float64)
-		if !latOk || !lonOk {
-			lat, latOk = val["Lat"].(float64)
-			lon, lonOk = val["Lon"].(float64)
-		}
-		if latOk && lonOk {
-			return GeoPoint{Lat: lat, Lon: lon}, nil
-		}
-		return GeoPoint{}, fmt.Errorf("invalid GeoPoint map")
-	default:
-		return GeoPoint{}, fmt.Errorf("cannot convert %T to GeoPoint", v)
-	}
+	return geo.ToPoint(v)
 }
 
 func toGeoPointSlice(v interface{}) ([]GeoPoint, error) {
-	switch val := v.(type) {
-	case []GeoPoint:
-		return val, nil
-	case []interface{}:
-		result := make([]GeoPoint, len(val))
-		for i, item := range val {
-			pt, err := toGeoPoint(item)
-			if err != nil {
-				return nil, fmt.Errorf("item %d: %w", i, err)
-			}
-			result[i] = pt
-		}
-		return result, nil
-	default:
-		return nil, fmt.Errorf("cannot convert %T to []GeoPoint", v)
-	}
+	return geo.ToPointSlice(v)
 }
 
 func toFloat64(v interface{}) (float64, bool) {

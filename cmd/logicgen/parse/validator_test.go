@@ -52,30 +52,6 @@ func TestRequiredFieldsValidator(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "missing selector type and entity",
-			ruleSet: &ast.RuleSet{
-				Rules: []*ast.Rule{
-					{
-						Name:     "Test",
-						Selector: &ast.Selector{Type: "", Entity: ""},
-					},
-				},
-			},
-			wantErr: true,
-		},
-		{
-			name: "selector with only entity is valid",
-			ruleSet: &ast.RuleSet{
-				Rules: []*ast.Rule{
-					{
-						Name:     "Test",
-						Selector: &ast.Selector{Entity: "Players"},
-					},
-				},
-			},
-			wantErr: false,
-		},
-		{
 			name: "missing effect type",
 			ruleSet: &ast.RuleSet{
 				Rules: []*ast.Rule{
@@ -204,32 +180,23 @@ func TestPathValidator(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "view field validation",
+			name: "view pipeline field validation",
 			ruleSet: &ast.RuleSet{
 				Rules: []*ast.Rule{
 					{
 						Name: "Test",
 						Views: map[string]*ast.View{
-							"total": {Type: ast.ViewTypeSum, Field: "$.Score"},
+							"total": {
+								Source: "Players",
+								Pipeline: []ast.ViewOperation{
+									{Type: ast.ViewOpSum, Field: "$.Score"},
+								},
+							},
 						},
 					},
 				},
 			},
 			wantErr: false,
-		},
-		{
-			name: "invalid view field",
-			ruleSet: &ast.RuleSet{
-				Rules: []*ast.Rule{
-					{
-						Name: "Test",
-						Views: map[string]*ast.View{
-							"total": {Type: ast.ViewTypeSum, Field: "invalid.field"},
-						},
-					},
-				},
-			},
-			wantErr: true,
 		},
 	}
 
@@ -306,13 +273,22 @@ func TestTriggerValidator(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "Distance requires positive value",
+			name: "Distance rejects negative value",
+			ruleSet: &ast.RuleSet{
+				Rules: []*ast.Rule{
+					{Name: "Test", Trigger: &ast.Trigger{Type: ast.TriggerTypeDistance, From: "$.A", To: "$.B", Value: -1}},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "Distance allows zero value",
 			ruleSet: &ast.RuleSet{
 				Rules: []*ast.Rule{
 					{Name: "Test", Trigger: &ast.Trigger{Type: ast.TriggerTypeDistance, From: "$.A", To: "$.B", Value: 0}},
 				},
 			},
-			wantErr: true,
+			wantErr: false,
 		},
 		{
 			name: "valid Distance trigger",
@@ -346,116 +322,6 @@ func TestTriggerValidator(t *testing.T) {
 			ruleSet: &ast.RuleSet{
 				Rules: []*ast.Rule{
 					{Name: "Test", Trigger: nil},
-				},
-			},
-			wantErr: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := v.Validate(tt.ruleSet)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
-	}
-}
-
-func TestSelectorValidator(t *testing.T) {
-	v := &SelectorValidator{}
-
-	tests := []struct {
-		name    string
-		ruleSet *ast.RuleSet
-		wantErr bool
-	}{
-		{
-			name: "All selector is always valid",
-			ruleSet: &ast.RuleSet{
-				Rules: []*ast.Rule{
-					{Name: "Test", Selector: &ast.Selector{Type: ast.SelectorTypeAll, Entity: "Players"}},
-				},
-			},
-			wantErr: false,
-		},
-		{
-			name: "Single requires id",
-			ruleSet: &ast.RuleSet{
-				Rules: []*ast.Rule{
-					{Name: "Test", Selector: &ast.Selector{Type: ast.SelectorTypeSingle, Entity: "Players"}},
-				},
-			},
-			wantErr: true,
-		},
-		{
-			name: "valid Single selector",
-			ruleSet: &ast.RuleSet{
-				Rules: []*ast.Rule{
-					{Name: "Test", Selector: &ast.Selector{Type: ast.SelectorTypeSingle, Entity: "Players", ID: "player-1"}},
-				},
-			},
-			wantErr: false,
-		},
-		{
-			name: "Related requires from",
-			ruleSet: &ast.RuleSet{
-				Rules: []*ast.Rule{
-					{Name: "Test", Selector: &ast.Selector{Type: ast.SelectorTypeRelated, Entity: "Items", Relation: "OwnerID"}},
-				},
-			},
-			wantErr: true,
-		},
-		{
-			name: "Related requires relation",
-			ruleSet: &ast.RuleSet{
-				Rules: []*ast.Rule{
-					{Name: "Test", Selector: &ast.Selector{Type: ast.SelectorTypeRelated, Entity: "Items", From: "$.Owner"}},
-				},
-			},
-			wantErr: true,
-		},
-		{
-			name: "valid Related selector",
-			ruleSet: &ast.RuleSet{
-				Rules: []*ast.Rule{
-					{Name: "Test", Selector: &ast.Selector{Type: ast.SelectorTypeRelated, Entity: "Items", From: "$.Owner", Relation: "OwnerID"}},
-				},
-			},
-			wantErr: false,
-		},
-		{
-			name: "Nearest requires origin",
-			ruleSet: &ast.RuleSet{
-				Rules: []*ast.Rule{
-					{Name: "Test", Selector: &ast.Selector{Type: ast.SelectorTypeNearest, Entity: "Enemies"}},
-				},
-			},
-			wantErr: true,
-		},
-		{
-			name: "valid Nearest selector",
-			ruleSet: &ast.RuleSet{
-				Rules: []*ast.Rule{
-					{Name: "Test", Selector: &ast.Selector{Type: ast.SelectorTypeNearest, Entity: "Enemies", Origin: "$.Position"}},
-				},
-			},
-			wantErr: false,
-		},
-		{
-			name: "Farthest requires origin",
-			ruleSet: &ast.RuleSet{
-				Rules: []*ast.Rule{
-					{Name: "Test", Selector: &ast.Selector{Type: ast.SelectorTypeFarthest, Entity: "Allies"}},
-				},
-			},
-			wantErr: true,
-		},
-		{
-			name: "nil selector is valid",
-			ruleSet: &ast.RuleSet{
-				Rules: []*ast.Rule{
-					{Name: "Test"},
 				},
 			},
 			wantErr: false,
@@ -517,24 +383,6 @@ func TestEffectValidator(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "Append requires path",
-			ruleSet: &ast.RuleSet{
-				Rules: []*ast.Rule{
-					{Name: "Test", Effects: []*ast.Effect{{Type: ast.EffectTypeAppend, Item: "item"}}},
-				},
-			},
-			wantErr: true,
-		},
-		{
-			name: "Append requires item",
-			ruleSet: &ast.RuleSet{
-				Rules: []*ast.Rule{
-					{Name: "Test", Effects: []*ast.Effect{{Type: ast.EffectTypeAppend, Path: "$.Items"}}},
-				},
-			},
-			wantErr: true,
-		},
-		{
 			name: "Emit requires event",
 			ruleSet: &ast.RuleSet{
 				Rules: []*ast.Rule{
@@ -553,19 +401,19 @@ func TestEffectValidator(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "Transform requires path",
+			name: "SetFromView requires path",
 			ruleSet: &ast.RuleSet{
 				Rules: []*ast.Rule{
-					{Name: "Test", Effects: []*ast.Effect{{Type: ast.EffectTypeTransform, Transform: &ast.Transform{}}}},
+					{Name: "Test", Effects: []*ast.Effect{{Type: ast.EffectTypeSetFromView, ValueExpression: &ast.ValueExpression{}}}},
 				},
 			},
 			wantErr: true,
 		},
 		{
-			name: "Transform requires transform",
+			name: "SetFromView requires valueExpression",
 			ruleSet: &ast.RuleSet{
 				Rules: []*ast.Rule{
-					{Name: "Test", Effects: []*ast.Effect{{Type: ast.EffectTypeTransform, Path: "$.Field"}}},
+					{Name: "Test", Effects: []*ast.Effect{{Type: ast.EffectTypeSetFromView, Path: "$.Field"}}},
 				},
 			},
 			wantErr: true,
@@ -591,19 +439,53 @@ func TestViewValidator(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name: "view requires type",
+			name: "view requires source",
 			ruleSet: &ast.RuleSet{
 				Rules: []*ast.Rule{
-					{Name: "Test", Views: map[string]*ast.View{"v": {Field: "$.Score"}}},
+					{Name: "Test", Views: map[string]*ast.View{"v": {}}},
 				},
 			},
 			wantErr: true,
 		},
 		{
-			name: "Sum requires field",
+			name: "valid view with source",
 			ruleSet: &ast.RuleSet{
 				Rules: []*ast.Rule{
-					{Name: "Test", Views: map[string]*ast.View{"v": {Type: ast.ViewTypeSum}}},
+					{Name: "Test", Views: map[string]*ast.View{"v": {Source: "Players"}}},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "Filter requires where clause",
+			ruleSet: &ast.RuleSet{
+				Rules: []*ast.Rule{
+					{
+						Name: "Test",
+						Views: map[string]*ast.View{
+							"v": {
+								Source:   "Players",
+								Pipeline: []ast.ViewOperation{{Type: ast.ViewOpFilter}},
+							},
+						},
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "OrderBy requires by field",
+			ruleSet: &ast.RuleSet{
+				Rules: []*ast.Rule{
+					{
+						Name: "Test",
+						Views: map[string]*ast.View{
+							"v": {
+								Source:   "Players",
+								Pipeline: []ast.ViewOperation{{Type: ast.ViewOpOrderBy}},
+							},
+						},
+					},
 				},
 			},
 			wantErr: true,
@@ -612,25 +494,32 @@ func TestViewValidator(t *testing.T) {
 			name: "GroupBy requires groupField",
 			ruleSet: &ast.RuleSet{
 				Rules: []*ast.Rule{
-					{Name: "Test", Views: map[string]*ast.View{"v": {Type: ast.ViewTypeGroupBy}}},
+					{
+						Name: "Test",
+						Views: map[string]*ast.View{
+							"v": {
+								Source:   "Players",
+								Pipeline: []ast.ViewOperation{{Type: ast.ViewOpGroupBy}},
+							},
+						},
+					},
 				},
 			},
 			wantErr: true,
 		},
 		{
-			name: "Sort requires by",
+			name: "Sum requires field",
 			ruleSet: &ast.RuleSet{
 				Rules: []*ast.Rule{
-					{Name: "Test", Views: map[string]*ast.View{"v": {Type: ast.ViewTypeSort}}},
-				},
-			},
-			wantErr: true,
-		},
-		{
-			name: "Distance requires from and to",
-			ruleSet: &ast.RuleSet{
-				Rules: []*ast.Rule{
-					{Name: "Test", Views: map[string]*ast.View{"v": {Type: ast.ViewTypeDistance}}},
+					{
+						Name: "Test",
+						Views: map[string]*ast.View{
+							"v": {
+								Source:   "Players",
+								Pipeline: []ast.ViewOperation{{Type: ast.ViewOpSum}},
+							},
+						},
+					},
 				},
 			},
 			wantErr: true,
@@ -639,7 +528,15 @@ func TestViewValidator(t *testing.T) {
 			name: "Count doesn't require field",
 			ruleSet: &ast.RuleSet{
 				Rules: []*ast.Rule{
-					{Name: "Test", Views: map[string]*ast.View{"v": {Type: ast.ViewTypeCount}}},
+					{
+						Name: "Test",
+						Views: map[string]*ast.View{
+							"v": {
+								Source:   "Players",
+								Pipeline: []ast.ViewOperation{{Type: ast.ViewOpCount}},
+							},
+						},
+					},
 				},
 			},
 			wantErr: false,
@@ -648,10 +545,35 @@ func TestViewValidator(t *testing.T) {
 			name: "First doesn't require field",
 			ruleSet: &ast.RuleSet{
 				Rules: []*ast.Rule{
-					{Name: "Test", Views: map[string]*ast.View{"v": {Type: ast.ViewTypeFirst}}},
+					{
+						Name: "Test",
+						Views: map[string]*ast.View{
+							"v": {
+								Source:   "Players",
+								Pipeline: []ast.ViewOperation{{Type: ast.ViewOpFirst}},
+							},
+						},
+					},
 				},
 			},
 			wantErr: false,
+		},
+		{
+			name: "Nearest requires origin and position",
+			ruleSet: &ast.RuleSet{
+				Rules: []*ast.Rule{
+					{
+						Name: "Test",
+						Views: map[string]*ast.View{
+							"v": {
+								Source:   "Players",
+								Pipeline: []ast.ViewOperation{{Type: ast.ViewOpNearest}},
+							},
+						},
+					},
+				},
+			},
+			wantErr: true,
 		},
 	}
 
@@ -680,7 +602,13 @@ func TestTransformValidator(t *testing.T) {
 					{
 						Name: "Test",
 						Effects: []*ast.Effect{
-							{Type: ast.EffectTypeTransform, Path: "$.Pos", Transform: &ast.Transform{Type: ast.TransformTypeMoveTowards, Speed: 10}},
+							{
+								Type: ast.EffectTypeSetFromView,
+								Path: "$.Pos",
+								ValueExpression: &ast.ValueExpression{
+									Transform: &ast.Transform{Type: ast.TransformTypeMoveTowards, Speed: 10},
+								},
+							},
 						},
 					},
 				},
@@ -694,7 +622,13 @@ func TestTransformValidator(t *testing.T) {
 					{
 						Name: "Test",
 						Effects: []*ast.Effect{
-							{Type: ast.EffectTypeTransform, Path: "$.Pos", Transform: &ast.Transform{Type: ast.TransformTypeMoveTowards, Current: "$.Pos", Target: "$.Target", Speed: 0}},
+							{
+								Type: ast.EffectTypeSetFromView,
+								Path: "$.Pos",
+								ValueExpression: &ast.ValueExpression{
+									Transform: &ast.Transform{Type: ast.TransformTypeMoveTowards, Current: "$.Pos", Target: "$.Target", Speed: 0},
+								},
+							},
 						},
 					},
 				},
@@ -708,7 +642,13 @@ func TestTransformValidator(t *testing.T) {
 					{
 						Name: "Test",
 						Effects: []*ast.Effect{
-							{Type: ast.EffectTypeTransform, Path: "$.Dist", Transform: &ast.Transform{Type: ast.TransformTypeGpsDistance}},
+							{
+								Type: ast.EffectTypeSetFromView,
+								Path: "$.Dist",
+								ValueExpression: &ast.ValueExpression{
+									Transform: &ast.Transform{Type: ast.TransformTypeGpsDistance},
+								},
+							},
 						},
 					},
 				},
@@ -722,7 +662,13 @@ func TestTransformValidator(t *testing.T) {
 					{
 						Name: "Test",
 						Effects: []*ast.Effect{
-							{Type: ast.EffectTypeTransform, Path: "$.Val", Transform: &ast.Transform{Type: ast.TransformTypeClamp}},
+							{
+								Type: ast.EffectTypeSetFromView,
+								Path: "$.Val",
+								ValueExpression: &ast.ValueExpression{
+									Transform: &ast.Transform{Type: ast.TransformTypeClamp},
+								},
+							},
 						},
 					},
 				},
@@ -736,7 +682,13 @@ func TestTransformValidator(t *testing.T) {
 					{
 						Name: "Test",
 						Effects: []*ast.Effect{
-							{Type: ast.EffectTypeTransform, Path: "$.Val", Transform: &ast.Transform{Type: ast.TransformTypeIf}},
+							{
+								Type: ast.EffectTypeSetFromView,
+								Path: "$.Val",
+								ValueExpression: &ast.ValueExpression{
+									Transform: &ast.Transform{Type: ast.TransformTypeIf},
+								},
+							},
 						},
 					},
 				},
@@ -750,7 +702,13 @@ func TestTransformValidator(t *testing.T) {
 					{
 						Name: "Test",
 						Effects: []*ast.Effect{
-							{Type: ast.EffectTypeTransform, Path: "$.Val", Transform: &ast.Transform{Type: ast.TransformTypeAdd}},
+							{
+								Type: ast.EffectTypeSetFromView,
+								Path: "$.Val",
+								ValueExpression: &ast.ValueExpression{
+									Transform: &ast.Transform{Type: ast.TransformTypeAdd},
+								},
+							},
 						},
 					},
 				},
@@ -833,6 +791,7 @@ func TestValidatePath(t *testing.T) {
 		{"view:total", false},          // View reference
 		{"const:100", false},           // Const reference
 		{"state:global.config", false}, // State reference
+		{"self.field", false},          // Self reference
 		{"invalid.path", true},         // No prefix
 		{"$.Items[0", true},            // Unbalanced - missing ]
 		{"$.Items]", true},             // Unbalanced - extra ]

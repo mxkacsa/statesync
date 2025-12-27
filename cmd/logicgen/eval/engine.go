@@ -18,7 +18,11 @@ type RuleController interface {
 	ResetTimer(ruleName string)
 }
 
-// Engine evaluates and executes rules
+// Engine evaluates and executes rules.
+// The engine follows the new architecture:
+// - Views are pure queries (no side effects)
+// - Effects are batch operations (engine handles iteration)
+// - No per-entity loops in rule definition
 type Engine struct {
 	rules    []*ast.Rule
 	state    interface{}
@@ -26,24 +30,26 @@ type Engine struct {
 	lastTick time.Time
 	tickRate time.Duration
 
+	// Global views that can be referenced by any rule
+	globalViews map[string]*ast.View
+
 	// Evaluators
-	triggerEval  *TriggerEvaluator
-	selectorEval *SelectorEvaluator
-	viewEval     *ViewEvaluator
-	effectEval   *EffectEvaluator
+	triggerEval *TriggerEvaluator
+	viewEval    *ViewEvaluator
+	effectEval  *EffectEvaluator
 }
 
 // NewEngine creates a new rule engine
 func NewEngine(state interface{}, rules []*ast.Rule) *Engine {
 	e := &Engine{
-		rules:    rules,
-		state:    state,
-		tickRate: 100 * time.Millisecond, // Default 100ms tick
-		lastTick: time.Now(),
+		rules:       rules,
+		state:       state,
+		tickRate:    100 * time.Millisecond, // Default 100ms tick
+		lastTick:    time.Now(),
+		globalViews: make(map[string]*ast.View),
 	}
 
 	e.triggerEval = NewTriggerEvaluator()
-	e.selectorEval = NewSelectorEvaluator()
 	e.viewEval = NewViewEvaluator()
 	e.effectEval = NewEffectEvaluator()
 	e.effectEval.SetRuleController(e) // Allow effects to enable/disable rules
@@ -61,6 +67,11 @@ func NewEngine(state interface{}, rules []*ast.Rule) *Engine {
 	})
 
 	return e
+}
+
+// RegisterGlobalView registers a view that can be referenced by any rule
+func (e *Engine) RegisterGlobalView(name string, view *ast.View) {
+	e.globalViews[name] = view
 }
 
 // EnableRule enables a rule by name, returns true if found
@@ -196,43 +207,39 @@ func (e *Engine) processTick(ctx context.Context, evalCtx *Context) error {
 	return nil
 }
 
-// executeRule executes a single rule
+// executeRule executes a single rule.
+// The new architecture:
+// 1. Evaluate all views (pure queries, stored in context)
+// 2. Apply all effects (batch operations, engine handles iteration)
 func (e *Engine) executeRule(ctx context.Context, rule *ast.Rule, evalCtx *Context) error {
 	// Clear views from previous executions
 	evalCtx.Views = make(map[string]interface{})
 
-	// Select entities
-	var entities []interface{}
-	if rule.Selector != nil {
-		var err error
-		entities, err = e.selectorEval.Select(evalCtx, rule.Selector)
-		if err != nil {
-			return fmt.Errorf("selector error: %w", err)
-		}
-	} else {
-		// No selector means apply to state directly
-		entities = []interface{}{evalCtx.State}
+	// Merge global views with rule views
+	allViews := make(map[string]*ast.View)
+	for name, view := range e.globalViews {
+		allViews[name] = view
+	}
+	for name, view := range rule.Views {
+		allViews[name] = view
 	}
 
-	evalCtx.SelectedEntities = entities
-
-	// Compute views (operate on all selected entities)
-	for name, view := range rule.Views {
-		value, err := e.viewEval.Compute(evalCtx, view, entities)
+	// Step 1: Evaluate all named views (pure queries, no side effects)
+	// Views are computed once and cached in context for use by effects
+	for name, view := range allViews {
+		result, err := e.viewEval.Evaluate(evalCtx, view, nil)
 		if err != nil {
 			return fmt.Errorf("view %s error: %w", name, err)
 		}
-		evalCtx.Views[name] = value
+		evalCtx.Views[name] = result
 	}
 
-	// Apply effects to each selected entity
-	for i, entity := range entities {
-		entityCtx := evalCtx.WithEntity(entity, i)
-
-		for _, effect := range rule.Effects {
-			if err := e.effectEval.Apply(entityCtx, effect); err != nil {
-				return fmt.Errorf("effect error: %w", err)
-			}
+	// Step 2: Apply effects (batch operations)
+	// Effects reference views for their targets
+	// The engine handles per-entity iteration inside each effect
+	for _, effect := range rule.Effects {
+		if err := e.effectEval.Apply(evalCtx, effect, allViews); err != nil {
+			return fmt.Errorf("effect error: %w", err)
 		}
 	}
 
@@ -251,6 +258,9 @@ func (e *Engine) GetTick() uint64 {
 
 // AddRule adds a rule to the engine
 func (e *Engine) AddRule(rule *ast.Rule) {
+	if rule.Trigger != nil {
+		rule.Trigger.RuleName = rule.Name
+	}
 	e.rules = append(e.rules, rule)
 	// Re-sort rules
 	sort.Slice(e.rules, func(i, j int) bool {

@@ -156,21 +156,6 @@ func ParseTrigger(data map[string]interface{}) (*ast.Trigger, error) {
 	return &trigger, nil
 }
 
-// ParseSelector parses a raw JSON map into a Selector
-func ParseSelector(data map[string]interface{}) (*ast.Selector, error) {
-	jsonData, err := json.Marshal(data)
-	if err != nil {
-		return nil, err
-	}
-
-	var selector ast.Selector
-	if err := json.Unmarshal(jsonData, &selector); err != nil {
-		return nil, err
-	}
-
-	return &selector, nil
-}
-
 // ParseView parses a raw JSON map into a View
 func ParseView(data map[string]interface{}) (*ast.View, error) {
 	jsonData, err := json.Marshal(data)

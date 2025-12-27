@@ -36,7 +36,7 @@ func TestEffectEvaluator_Set_Int(t *testing.T) {
 		Value: 100,
 	}
 
-	if err := ee.Apply(ctx, effect); err != nil {
+	if err := ee.Apply(ctx, effect, nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -56,7 +56,7 @@ func TestEffectEvaluator_Set_Float(t *testing.T) {
 		Value: 100.5,
 	}
 
-	if err := ee.Apply(ctx, effect); err != nil {
+	if err := ee.Apply(ctx, effect, nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -76,7 +76,7 @@ func TestEffectEvaluator_Set_String(t *testing.T) {
 		Value: "Player1",
 	}
 
-	if err := ee.Apply(ctx, effect); err != nil {
+	if err := ee.Apply(ctx, effect, nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -96,7 +96,7 @@ func TestEffectEvaluator_Set_Bool(t *testing.T) {
 		Value: true,
 	}
 
-	if err := ee.Apply(ctx, effect); err != nil {
+	if err := ee.Apply(ctx, effect, nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -117,7 +117,7 @@ func TestEffectEvaluator_Set_GeoPoint(t *testing.T) {
 		Value: newPos,
 	}
 
-	if err := ee.Apply(ctx, effect); err != nil {
+	if err := ee.Apply(ctx, effect, nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -138,7 +138,7 @@ func TestEffectEvaluator_Set_FromParam(t *testing.T) {
 		Value: "param:newScore",
 	}
 
-	if err := ee.Apply(ctx, effect); err != nil {
+	if err := ee.Apply(ctx, effect, nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -158,7 +158,7 @@ func TestEffectEvaluator_Increment(t *testing.T) {
 		Value: 10,
 	}
 
-	if err := ee.Apply(ctx, effect); err != nil {
+	if err := ee.Apply(ctx, effect, nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -178,7 +178,7 @@ func TestEffectEvaluator_Increment_Float(t *testing.T) {
 		Value: 10.5,
 	}
 
-	if err := ee.Apply(ctx, effect); err != nil {
+	if err := ee.Apply(ctx, effect, nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -198,7 +198,7 @@ func TestEffectEvaluator_Increment_Negative(t *testing.T) {
 		Value: -20,
 	}
 
-	if err := ee.Apply(ctx, effect); err != nil {
+	if err := ee.Apply(ctx, effect, nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -218,7 +218,7 @@ func TestEffectEvaluator_Increment_NonNumeric(t *testing.T) {
 		Value: 10,
 	}
 
-	err := ee.Apply(ctx, effect)
+	err := ee.Apply(ctx, effect, nil)
 	if err == nil {
 		t.Error("expected error for non-numeric increment")
 	}
@@ -235,7 +235,7 @@ func TestEffectEvaluator_Decrement(t *testing.T) {
 		Value: 30,
 	}
 
-	if err := ee.Apply(ctx, effect); err != nil {
+	if err := ee.Apply(ctx, effect, nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -255,279 +255,13 @@ func TestEffectEvaluator_Decrement_BelowZero(t *testing.T) {
 		Value: 50,
 	}
 
-	if err := ee.Apply(ctx, effect); err != nil {
+	if err := ee.Apply(ctx, effect, nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	// Should go negative
 	if state.Score != -30 {
 		t.Errorf("expected Score=-30, got %d", state.Score)
-	}
-}
-
-func TestEffectEvaluator_Append(t *testing.T) {
-	state := &EffectTestState{
-		Inventory: []string{"sword", "shield"},
-	}
-	ctx := NewContext(state, 0, 0)
-	ee := NewEffectEvaluator()
-
-	effect := &ast.Effect{
-		Type: ast.EffectTypeAppend,
-		Path: "$.Inventory",
-		Item: "potion",
-	}
-
-	if err := ee.Apply(ctx, effect); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(state.Inventory) != 3 {
-		t.Fatalf("expected 3 items, got %d", len(state.Inventory))
-	}
-
-	if state.Inventory[2] != "potion" {
-		t.Errorf("expected 'potion', got %s", state.Inventory[2])
-	}
-}
-
-func TestEffectEvaluator_Append_ToEmpty(t *testing.T) {
-	state := &EffectTestState{
-		Inventory: []string{},
-	}
-	ctx := NewContext(state, 0, 0)
-	ee := NewEffectEvaluator()
-
-	effect := &ast.Effect{
-		Type: ast.EffectTypeAppend,
-		Path: "$.Inventory",
-		Item: "first-item",
-	}
-
-	if err := ee.Apply(ctx, effect); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(state.Inventory) != 1 {
-		t.Fatalf("expected 1 item, got %d", len(state.Inventory))
-	}
-}
-
-func TestEffectEvaluator_Append_NonSlice(t *testing.T) {
-	state := &EffectTestState{Name: "test"}
-	ctx := NewContext(state, 0, 0)
-	ee := NewEffectEvaluator()
-
-	effect := &ast.Effect{
-		Type: ast.EffectTypeAppend,
-		Path: "$.Name",
-		Item: "item",
-	}
-
-	err := ee.Apply(ctx, effect)
-	if err == nil {
-		t.Error("expected error for appending to non-slice")
-	}
-}
-
-func TestEffectEvaluator_Remove_ByIndex(t *testing.T) {
-	state := &EffectTestState{
-		Inventory: []string{"a", "b", "c", "d"},
-	}
-	ctx := NewContext(state, 0, 0)
-	ee := NewEffectEvaluator()
-
-	effect := &ast.Effect{
-		Type:  ast.EffectTypeRemove,
-		Path:  "$.Inventory",
-		Index: 1, // Remove "b"
-	}
-
-	if err := ee.Apply(ctx, effect); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(state.Inventory) != 3 {
-		t.Fatalf("expected 3 items, got %d", len(state.Inventory))
-	}
-
-	expected := []string{"a", "c", "d"}
-	for i, v := range expected {
-		if state.Inventory[i] != v {
-			t.Errorf("index %d: expected %s, got %s", i, v, state.Inventory[i])
-		}
-	}
-}
-
-func TestEffectEvaluator_Remove_ByIndex_OutOfBounds(t *testing.T) {
-	state := &EffectTestState{
-		Inventory: []string{"a", "b"},
-	}
-	ctx := NewContext(state, 0, 0)
-	ee := NewEffectEvaluator()
-
-	effect := &ast.Effect{
-		Type:  ast.EffectTypeRemove,
-		Path:  "$.Inventory",
-		Index: 10, // Out of bounds
-	}
-
-	err := ee.Apply(ctx, effect)
-	if err == nil {
-		t.Error("expected error for out of bounds index")
-	}
-}
-
-func TestEffectEvaluator_Remove_ByCondition(t *testing.T) {
-	state := &EffectTestState{
-		Items: []EffectItem{
-			{ID: "i1", Quantity: 5},
-			{ID: "i2", Quantity: 0},
-			{ID: "i3", Quantity: 3},
-			{ID: "i4", Quantity: 0},
-		},
-	}
-	ctx := NewContext(state, 0, 0)
-	ee := NewEffectEvaluator()
-
-	effect := &ast.Effect{
-		Type: ast.EffectTypeRemove,
-		Path: "$.Items",
-		Where: &ast.WhereClause{
-			Field: "Quantity",
-			Op:    "==",
-			Value: 0,
-		},
-	}
-
-	if err := ee.Apply(ctx, effect); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(state.Items) != 2 {
-		t.Errorf("expected 2 items (non-zero quantity), got %d", len(state.Items))
-	}
-}
-
-func TestEffectEvaluator_Remove_NonSlice(t *testing.T) {
-	state := &EffectTestState{Score: 100}
-	ctx := NewContext(state, 0, 0)
-	ee := NewEffectEvaluator()
-
-	effect := &ast.Effect{
-		Type:  ast.EffectTypeRemove,
-		Path:  "$.Score",
-		Index: 0,
-	}
-
-	err := ee.Apply(ctx, effect)
-	if err == nil {
-		t.Error("expected error for removing from non-slice")
-	}
-}
-
-func TestEffectEvaluator_Clear_Slice(t *testing.T) {
-	state := &EffectTestState{
-		Inventory: []string{"a", "b", "c"},
-	}
-	ctx := NewContext(state, 0, 0)
-	ee := NewEffectEvaluator()
-
-	effect := &ast.Effect{
-		Type: ast.EffectTypeClear,
-		Path: "$.Inventory",
-	}
-
-	if err := ee.Apply(ctx, effect); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(state.Inventory) != 0 {
-		t.Errorf("expected empty inventory, got %d items", len(state.Inventory))
-	}
-}
-
-func TestEffectEvaluator_Clear_Map(t *testing.T) {
-	state := &EffectTestState{
-		Tags: map[string]string{
-			"key1": "value1",
-			"key2": "value2",
-		},
-	}
-	ctx := NewContext(state, 0, 0)
-	ee := NewEffectEvaluator()
-
-	effect := &ast.Effect{
-		Type: ast.EffectTypeClear,
-		Path: "$.Tags",
-	}
-
-	if err := ee.Apply(ctx, effect); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(state.Tags) != 0 {
-		t.Errorf("expected empty tags, got %d", len(state.Tags))
-	}
-}
-
-func TestEffectEvaluator_Clear_NonClearable(t *testing.T) {
-	state := &EffectTestState{Score: 100}
-	ctx := NewContext(state, 0, 0)
-	ee := NewEffectEvaluator()
-
-	effect := &ast.Effect{
-		Type: ast.EffectTypeClear,
-		Path: "$.Score",
-	}
-
-	err := ee.Apply(ctx, effect)
-	if err == nil {
-		t.Error("expected error for clearing non-clearable type")
-	}
-}
-
-func TestEffectEvaluator_Transform_Add(t *testing.T) {
-	state := &EffectTestState{Score: 50}
-	ctx := NewContext(state, 0, 0)
-	ee := NewEffectEvaluator()
-
-	effect := &ast.Effect{
-		Type: ast.EffectTypeTransform,
-		Path: "$.Score",
-		Transform: &ast.Transform{
-			Type:  ast.TransformTypeAdd,
-			Left:  "$.Score",
-			Right: 25,
-		},
-	}
-
-	if err := ee.Apply(ctx, effect); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if state.Score != 75 {
-		t.Errorf("expected Score=75, got %d", state.Score)
-	}
-}
-
-// Note: MoveTowards transform test requires DeltaTime and param: support in Path fields.
-// Skipping until API is updated to handle param: references in Transform.Target field.
-
-func TestEffectEvaluator_Transform_Nil(t *testing.T) {
-	state := &EffectTestState{}
-	ctx := NewContext(state, 0, 0)
-	ee := NewEffectEvaluator()
-
-	effect := &ast.Effect{
-		Type:      ast.EffectTypeTransform,
-		Path:      "$.Score",
-		Transform: nil,
-	}
-
-	err := ee.Apply(ctx, effect)
-	if err == nil {
-		t.Error("expected error for nil transform")
 	}
 }
 
@@ -551,7 +285,7 @@ func TestEffectEvaluator_If_ThenBranch(t *testing.T) {
 		},
 	}
 
-	if err := ee.Apply(ctx, effect); err != nil {
+	if err := ee.Apply(ctx, effect, nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -580,7 +314,7 @@ func TestEffectEvaluator_If_ElseBranch(t *testing.T) {
 		},
 	}
 
-	if err := ee.Apply(ctx, effect); err != nil {
+	if err := ee.Apply(ctx, effect, nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -605,7 +339,7 @@ func TestEffectEvaluator_If_NoElse(t *testing.T) {
 		// No Else branch
 	}
 
-	if err := ee.Apply(ctx, effect); err != nil {
+	if err := ee.Apply(ctx, effect, nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -652,7 +386,7 @@ func TestEffectEvaluator_If_TruthyChecks(t *testing.T) {
 				},
 			}
 
-			if err := ee.Apply(ctx, effect); err != nil {
+			if err := ee.Apply(ctx, effect, nil); err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
@@ -694,7 +428,7 @@ func TestEffectEvaluator_Sequence(t *testing.T) {
 		},
 	}
 
-	if err := ee.Apply(ctx, effect); err != nil {
+	if err := ee.Apply(ctx, effect, nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -716,7 +450,7 @@ func TestEffectEvaluator_Sequence_Empty(t *testing.T) {
 		Effects: []*ast.Effect{},
 	}
 
-	if err := ee.Apply(ctx, effect); err != nil {
+	if err := ee.Apply(ctx, effect, nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -752,7 +486,7 @@ func TestEffectEvaluator_Sequence_StopsOnError(t *testing.T) {
 		},
 	}
 
-	err := ee.Apply(ctx, effect)
+	err := ee.Apply(ctx, effect, nil)
 	if err == nil {
 		t.Error("expected error in sequence")
 	}
@@ -778,7 +512,7 @@ func TestEffectEvaluator_Emit(t *testing.T) {
 	}
 
 	// Emit is a placeholder, just verify it doesn't error
-	if err := ee.Apply(ctx, effect); err != nil {
+	if err := ee.Apply(ctx, effect, nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -799,7 +533,7 @@ func TestEffectEvaluator_Spawn(t *testing.T) {
 	}
 
 	// Spawn is a placeholder, just verify it doesn't error
-	if err := ee.Apply(ctx, effect); err != nil {
+	if err := ee.Apply(ctx, effect, nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -814,7 +548,7 @@ func TestEffectEvaluator_Destroy(t *testing.T) {
 	}
 
 	// Destroy is a placeholder, just verify it doesn't error
-	if err := ee.Apply(ctx, effect); err != nil {
+	if err := ee.Apply(ctx, effect, nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -828,12 +562,51 @@ func TestEffectEvaluator_UnknownType(t *testing.T) {
 		Type: "Unknown",
 	}
 
-	err := ee.Apply(ctx, effect)
+	err := ee.Apply(ctx, effect, nil)
 	if err == nil {
 		t.Error("expected error for unknown effect type")
 	}
 }
 
-// Note: Set_OnEntity test is skipped because modifying struct fields inside slices
-// requires the slice to contain pointers, not values. The current test uses value types
-// which creates a copy when passed to WithEntity, preventing modification of the original.
+func TestEffectEvaluator_SetFromView(t *testing.T) {
+	state := &EffectTestState{Score: 0}
+	ctx := NewContext(state, 0, 0)
+	ee := NewEffectEvaluator()
+
+	// SetFromView with a literal value expression
+	effect := &ast.Effect{
+		Type: ast.EffectTypeSetFromView,
+		Path: "$.Score",
+		ValueExpression: &ast.ValueExpression{
+			Type:    "literal",
+			Literal: 42,
+		},
+	}
+
+	if err := ee.Apply(ctx, effect, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if state.Score != 42 {
+		t.Errorf("expected Score=42, got %d", state.Score)
+	}
+}
+
+func TestEffectEvaluator_RuleControl(t *testing.T) {
+	// Note: Rule control effects require a rule controller to be set.
+	// Without a controller, they return an error. This tests that behavior.
+	state := &EffectTestState{}
+	ctx := NewContext(state, 0, 0)
+	ee := NewEffectEvaluator()
+
+	// Test EnableRule without controller - should fail
+	effect := &ast.Effect{
+		Type: ast.EffectTypeEnableRule,
+		Rule: "TestRule",
+	}
+
+	err := ee.Apply(ctx, effect, nil)
+	if err == nil {
+		t.Error("Expected error when rule controller not set")
+	}
+}

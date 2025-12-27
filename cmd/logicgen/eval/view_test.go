@@ -31,97 +31,100 @@ type ViewPlayer struct {
 	Level int
 }
 
-func TestViewEvaluator_Field_Single(t *testing.T) {
-	state := &ViewTestState{}
+func TestViewEvaluator_Filter(t *testing.T) {
+	state := &ViewTestState{
+		Items: []ViewItem{
+			{ID: "i1", Category: "Weapon", Price: 100},
+			{ID: "i2", Category: "Armor", Price: 50},
+			{ID: "i3", Category: "Weapon", Price: 150},
+		},
+	}
 	ctx := NewContext(state, 0, 0)
 	ve := NewViewEvaluator()
 
-	entities := []interface{}{
-		ViewItem{ID: "i1", Name: "Sword", Price: 100.0},
-	}
-
 	view := &ast.View{
-		Type:  ast.ViewTypeField,
-		Field: "$.Name",
+		Source: "Items",
+		Pipeline: []ast.ViewOperation{
+			{
+				Type: ast.ViewOpFilter,
+				Where: &ast.WhereClause{
+					Field: "Category",
+					Op:    "==",
+					Value: "Weapon",
+				},
+			},
+		},
 	}
 
-	result, err := ve.Compute(ctx, view, entities)
+	result, err := ve.Evaluate(ctx, view, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if result != "Sword" {
-		t.Errorf("expected 'Sword', got %v", result)
+	items := result.([]interface{})
+	if len(items) != 2 {
+		t.Errorf("expected 2 weapons, got %d", len(items))
 	}
 }
 
-func TestViewEvaluator_Field_Multiple(t *testing.T) {
-	state := &ViewTestState{}
-	ctx := NewContext(state, 0, 0)
-	ve := NewViewEvaluator()
-
-	entities := []interface{}{
-		ViewItem{ID: "i1", Name: "Sword"},
-		ViewItem{ID: "i2", Name: "Shield"},
-		ViewItem{ID: "i3", Name: "Potion"},
+func TestViewEvaluator_Filter_Comparison(t *testing.T) {
+	state := &ViewTestState{
+		Items: []ViewItem{
+			{ID: "i1", Price: 50},
+			{ID: "i2", Price: 100},
+			{ID: "i3", Price: 150},
+		},
 	}
-
-	view := &ast.View{
-		Type:  ast.ViewTypeField,
-		Field: "$.Name",
-	}
-
-	result, err := ve.Compute(ctx, view, entities)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	names := result.([]interface{})
-	if len(names) != 3 {
-		t.Errorf("expected 3 names, got %d", len(names))
-	}
-	if names[0] != "Sword" || names[1] != "Shield" || names[2] != "Potion" {
-		t.Errorf("unexpected names: %v", names)
-	}
-}
-
-func TestViewEvaluator_Field_Empty(t *testing.T) {
-	state := &ViewTestState{}
 	ctx := NewContext(state, 0, 0)
 	ve := NewViewEvaluator()
 
 	view := &ast.View{
-		Type:  ast.ViewTypeField,
-		Field: "$.Name",
+		Source: "Items",
+		Pipeline: []ast.ViewOperation{
+			{
+				Type: ast.ViewOpFilter,
+				Where: &ast.WhereClause{
+					Field: "Price",
+					Op:    ">",
+					Value: 75.0,
+				},
+			},
+		},
 	}
 
-	result, err := ve.Compute(ctx, view, []interface{}{})
+	result, err := ve.Evaluate(ctx, view, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if result != nil {
-		t.Errorf("expected nil for empty entities, got %v", result)
+	items := result.([]interface{})
+	if len(items) != 2 {
+		t.Errorf("expected 2 items with Price > 75, got %d", len(items))
 	}
 }
 
 func TestViewEvaluator_Max(t *testing.T) {
-	state := &ViewTestState{}
+	state := &ViewTestState{
+		Items: []ViewItem{
+			{ID: "i1", Price: 50.0},
+			{ID: "i2", Price: 150.0},
+			{ID: "i3", Price: 75.0},
+		},
+	}
 	ctx := NewContext(state, 0, 0)
 	ve := NewViewEvaluator()
 
-	entities := []interface{}{
-		ViewItem{ID: "i1", Price: 50.0},
-		ViewItem{ID: "i2", Price: 150.0},
-		ViewItem{ID: "i3", Price: 75.0},
-	}
-
 	view := &ast.View{
-		Type:  ast.ViewTypeMax,
-		Field: "$.Price",
+		Source: "Items",
+		Pipeline: []ast.ViewOperation{
+			{
+				Type:  ast.ViewOpMax,
+				Field: "Price",
+			},
+		},
 	}
 
-	result, err := ve.Compute(ctx, view, entities)
+	result, err := ve.Evaluate(ctx, view, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -132,23 +135,28 @@ func TestViewEvaluator_Max(t *testing.T) {
 }
 
 func TestViewEvaluator_Max_ReturnEntity(t *testing.T) {
-	state := &ViewTestState{}
+	state := &ViewTestState{
+		Items: []ViewItem{
+			{ID: "i1", Price: 50.0},
+			{ID: "i2", Price: 150.0},
+			{ID: "i3", Price: 75.0},
+		},
+	}
 	ctx := NewContext(state, 0, 0)
 	ve := NewViewEvaluator()
 
-	entities := []interface{}{
-		ViewItem{ID: "i1", Price: 50.0},
-		ViewItem{ID: "i2", Price: 150.0},
-		ViewItem{ID: "i3", Price: 75.0},
-	}
-
 	view := &ast.View{
-		Type:   ast.ViewTypeMax,
-		Field:  "$.Price",
-		Return: "entity",
+		Source: "Items",
+		Pipeline: []ast.ViewOperation{
+			{
+				Type:   ast.ViewOpMax,
+				Field:  "Price",
+				Return: "entity",
+			},
+		},
 	}
 
-	result, err := ve.Compute(ctx, view, entities)
+	result, err := ve.Evaluate(ctx, view, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -160,16 +168,23 @@ func TestViewEvaluator_Max_ReturnEntity(t *testing.T) {
 }
 
 func TestViewEvaluator_Max_Empty(t *testing.T) {
-	state := &ViewTestState{}
+	state := &ViewTestState{
+		Items: []ViewItem{},
+	}
 	ctx := NewContext(state, 0, 0)
 	ve := NewViewEvaluator()
 
 	view := &ast.View{
-		Type:  ast.ViewTypeMax,
-		Field: "$.Price",
+		Source: "Items",
+		Pipeline: []ast.ViewOperation{
+			{
+				Type:  ast.ViewOpMax,
+				Field: "Price",
+			},
+		},
 	}
 
-	result, err := ve.Compute(ctx, view, []interface{}{})
+	result, err := ve.Evaluate(ctx, view, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -180,22 +195,27 @@ func TestViewEvaluator_Max_Empty(t *testing.T) {
 }
 
 func TestViewEvaluator_Min(t *testing.T) {
-	state := &ViewTestState{}
+	state := &ViewTestState{
+		Items: []ViewItem{
+			{ID: "i1", Price: 50.0},
+			{ID: "i2", Price: 150.0},
+			{ID: "i3", Price: 25.0},
+		},
+	}
 	ctx := NewContext(state, 0, 0)
 	ve := NewViewEvaluator()
 
-	entities := []interface{}{
-		ViewItem{ID: "i1", Price: 50.0},
-		ViewItem{ID: "i2", Price: 150.0},
-		ViewItem{ID: "i3", Price: 25.0},
-	}
-
 	view := &ast.View{
-		Type:  ast.ViewTypeMin,
-		Field: "$.Price",
+		Source: "Items",
+		Pipeline: []ast.ViewOperation{
+			{
+				Type:  ast.ViewOpMin,
+				Field: "Price",
+			},
+		},
 	}
 
-	result, err := ve.Compute(ctx, view, entities)
+	result, err := ve.Evaluate(ctx, view, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -206,23 +226,28 @@ func TestViewEvaluator_Min(t *testing.T) {
 }
 
 func TestViewEvaluator_Min_ReturnEntity(t *testing.T) {
-	state := &ViewTestState{}
+	state := &ViewTestState{
+		Items: []ViewItem{
+			{ID: "i1", Price: 50.0},
+			{ID: "i2", Price: 150.0},
+			{ID: "i3", Price: 25.0},
+		},
+	}
 	ctx := NewContext(state, 0, 0)
 	ve := NewViewEvaluator()
 
-	entities := []interface{}{
-		ViewItem{ID: "i1", Price: 50.0},
-		ViewItem{ID: "i2", Price: 150.0},
-		ViewItem{ID: "i3", Price: 25.0},
-	}
-
 	view := &ast.View{
-		Type:   ast.ViewTypeMin,
-		Field:  "$.Price",
-		Return: "entity",
+		Source: "Items",
+		Pipeline: []ast.ViewOperation{
+			{
+				Type:   ast.ViewOpMin,
+				Field:  "Price",
+				Return: "entity",
+			},
+		},
 	}
 
-	result, err := ve.Compute(ctx, view, entities)
+	result, err := ve.Evaluate(ctx, view, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -234,22 +259,27 @@ func TestViewEvaluator_Min_ReturnEntity(t *testing.T) {
 }
 
 func TestViewEvaluator_Sum(t *testing.T) {
-	state := &ViewTestState{}
+	state := &ViewTestState{
+		Items: []ViewItem{
+			{ID: "i1", Price: 50.0},
+			{ID: "i2", Price: 30.0},
+			{ID: "i3", Price: 20.0},
+		},
+	}
 	ctx := NewContext(state, 0, 0)
 	ve := NewViewEvaluator()
 
-	entities := []interface{}{
-		ViewItem{ID: "i1", Price: 50.0},
-		ViewItem{ID: "i2", Price: 30.0},
-		ViewItem{ID: "i3", Price: 20.0},
-	}
-
 	view := &ast.View{
-		Type:  ast.ViewTypeSum,
-		Field: "$.Price",
+		Source: "Items",
+		Pipeline: []ast.ViewOperation{
+			{
+				Type:  ast.ViewOpSum,
+				Field: "Price",
+			},
+		},
 	}
 
-	result, err := ve.Compute(ctx, view, entities)
+	result, err := ve.Evaluate(ctx, view, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -260,22 +290,27 @@ func TestViewEvaluator_Sum(t *testing.T) {
 }
 
 func TestViewEvaluator_Sum_IntegerField(t *testing.T) {
-	state := &ViewTestState{}
+	state := &ViewTestState{
+		Items: []ViewItem{
+			{ID: "i1", Quantity: 5},
+			{ID: "i2", Quantity: 10},
+			{ID: "i3", Quantity: 3},
+		},
+	}
 	ctx := NewContext(state, 0, 0)
 	ve := NewViewEvaluator()
 
-	entities := []interface{}{
-		ViewItem{ID: "i1", Quantity: 5},
-		ViewItem{ID: "i2", Quantity: 10},
-		ViewItem{ID: "i3", Quantity: 3},
-	}
-
 	view := &ast.View{
-		Type:  ast.ViewTypeSum,
-		Field: "$.Quantity",
+		Source: "Items",
+		Pipeline: []ast.ViewOperation{
+			{
+				Type:  ast.ViewOpSum,
+				Field: "Quantity",
+			},
+		},
 	}
 
-	result, err := ve.Compute(ctx, view, entities)
+	result, err := ve.Evaluate(ctx, view, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -286,16 +321,23 @@ func TestViewEvaluator_Sum_IntegerField(t *testing.T) {
 }
 
 func TestViewEvaluator_Sum_Empty(t *testing.T) {
-	state := &ViewTestState{}
+	state := &ViewTestState{
+		Items: []ViewItem{},
+	}
 	ctx := NewContext(state, 0, 0)
 	ve := NewViewEvaluator()
 
 	view := &ast.View{
-		Type:  ast.ViewTypeSum,
-		Field: "$.Price",
+		Source: "Items",
+		Pipeline: []ast.ViewOperation{
+			{
+				Type:  ast.ViewOpSum,
+				Field: "Price",
+			},
+		},
 	}
 
-	result, err := ve.Compute(ctx, view, []interface{}{})
+	result, err := ve.Evaluate(ctx, view, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -306,21 +348,26 @@ func TestViewEvaluator_Sum_Empty(t *testing.T) {
 }
 
 func TestViewEvaluator_Count(t *testing.T) {
-	state := &ViewTestState{}
+	state := &ViewTestState{
+		Items: []ViewItem{
+			{ID: "i1"},
+			{ID: "i2"},
+			{ID: "i3"},
+		},
+	}
 	ctx := NewContext(state, 0, 0)
 	ve := NewViewEvaluator()
 
-	entities := []interface{}{
-		ViewItem{ID: "i1"},
-		ViewItem{ID: "i2"},
-		ViewItem{ID: "i3"},
-	}
-
 	view := &ast.View{
-		Type: ast.ViewTypeCount,
+		Source: "Items",
+		Pipeline: []ast.ViewOperation{
+			{
+				Type: ast.ViewOpCount,
+			},
+		},
 	}
 
-	result, err := ve.Compute(ctx, view, entities)
+	result, err := ve.Evaluate(ctx, view, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -330,28 +377,36 @@ func TestViewEvaluator_Count(t *testing.T) {
 	}
 }
 
-func TestViewEvaluator_Count_WithCondition(t *testing.T) {
-	state := &ViewTestState{}
+func TestViewEvaluator_FilterThenCount(t *testing.T) {
+	state := &ViewTestState{
+		Items: []ViewItem{
+			{ID: "i1", Category: "Weapon"},
+			{ID: "i2", Category: "Armor"},
+			{ID: "i3", Category: "Weapon"},
+			{ID: "i4", Category: "Potion"},
+		},
+	}
 	ctx := NewContext(state, 0, 0)
 	ve := NewViewEvaluator()
 
-	entities := []interface{}{
-		ViewItem{ID: "i1", Category: "Weapon"},
-		ViewItem{ID: "i2", Category: "Armor"},
-		ViewItem{ID: "i3", Category: "Weapon"},
-		ViewItem{ID: "i4", Category: "Potion"},
-	}
-
 	view := &ast.View{
-		Type: ast.ViewTypeCount,
-		Where: &ast.WhereClause{
-			Field: "Category",
-			Op:    "==",
-			Value: "Weapon",
+		Source: "Items",
+		Pipeline: []ast.ViewOperation{
+			{
+				Type: ast.ViewOpFilter,
+				Where: &ast.WhereClause{
+					Field: "Category",
+					Op:    "==",
+					Value: "Weapon",
+				},
+			},
+			{
+				Type: ast.ViewOpCount,
+			},
 		},
 	}
 
-	result, err := ve.Compute(ctx, view, entities)
+	result, err := ve.Evaluate(ctx, view, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -361,54 +416,28 @@ func TestViewEvaluator_Count_WithCondition(t *testing.T) {
 	}
 }
 
-func TestViewEvaluator_Count_WithNotEqual(t *testing.T) {
-	state := &ViewTestState{}
+func TestViewEvaluator_Avg(t *testing.T) {
+	state := &ViewTestState{
+		Players: []ViewPlayer{
+			{ID: "p1", Score: 100},
+			{ID: "p2", Score: 200},
+			{ID: "p3", Score: 300},
+		},
+	}
 	ctx := NewContext(state, 0, 0)
 	ve := NewViewEvaluator()
 
-	entities := []interface{}{
-		ViewPlayer{ID: "p1", Team: "Red"},
-		ViewPlayer{ID: "p2", Team: "Blue"},
-		ViewPlayer{ID: "p3", Team: "Red"},
-		ViewPlayer{ID: "p4", Team: "Green"},
-	}
-
 	view := &ast.View{
-		Type: ast.ViewTypeCount,
-		Where: &ast.WhereClause{
-			Field: "Team",
-			Op:    "!=",
-			Value: "Red",
+		Source: "Players",
+		Pipeline: []ast.ViewOperation{
+			{
+				Type:  ast.ViewOpAvg,
+				Field: "Score",
+			},
 		},
 	}
 
-	result, err := ve.Compute(ctx, view, entities)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if result != 2 {
-		t.Errorf("expected 2 non-red, got %v", result)
-	}
-}
-
-func TestViewEvaluator_Avg(t *testing.T) {
-	state := &ViewTestState{}
-	ctx := NewContext(state, 0, 0)
-	ve := NewViewEvaluator()
-
-	entities := []interface{}{
-		ViewPlayer{ID: "p1", Score: 100},
-		ViewPlayer{ID: "p2", Score: 200},
-		ViewPlayer{ID: "p3", Score: 300},
-	}
-
-	view := &ast.View{
-		Type:  ast.ViewTypeAvg,
-		Field: "$.Score",
-	}
-
-	result, err := ve.Compute(ctx, view, entities)
+	result, err := ve.Evaluate(ctx, view, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -419,16 +448,23 @@ func TestViewEvaluator_Avg(t *testing.T) {
 }
 
 func TestViewEvaluator_Avg_Empty(t *testing.T) {
-	state := &ViewTestState{}
+	state := &ViewTestState{
+		Players: []ViewPlayer{},
+	}
 	ctx := NewContext(state, 0, 0)
 	ve := NewViewEvaluator()
 
 	view := &ast.View{
-		Type:  ast.ViewTypeAvg,
-		Field: "$.Score",
+		Source: "Players",
+		Pipeline: []ast.ViewOperation{
+			{
+				Type:  ast.ViewOpAvg,
+				Field: "Score",
+			},
+		},
 	}
 
-	result, err := ve.Compute(ctx, view, []interface{}{})
+	result, err := ve.Evaluate(ctx, view, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -439,21 +475,26 @@ func TestViewEvaluator_Avg_Empty(t *testing.T) {
 }
 
 func TestViewEvaluator_First(t *testing.T) {
-	state := &ViewTestState{}
+	state := &ViewTestState{
+		Items: []ViewItem{
+			{ID: "i1", Name: "First"},
+			{ID: "i2", Name: "Second"},
+			{ID: "i3", Name: "Third"},
+		},
+	}
 	ctx := NewContext(state, 0, 0)
 	ve := NewViewEvaluator()
 
-	entities := []interface{}{
-		ViewItem{ID: "i1", Name: "First"},
-		ViewItem{ID: "i2", Name: "Second"},
-		ViewItem{ID: "i3", Name: "Third"},
-	}
-
 	view := &ast.View{
-		Type: ast.ViewTypeFirst,
+		Source: "Items",
+		Pipeline: []ast.ViewOperation{
+			{
+				Type: ast.ViewOpFirst,
+			},
+		},
 	}
 
-	result, err := ve.Compute(ctx, view, entities)
+	result, err := ve.Evaluate(ctx, view, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -465,15 +506,22 @@ func TestViewEvaluator_First(t *testing.T) {
 }
 
 func TestViewEvaluator_First_Empty(t *testing.T) {
-	state := &ViewTestState{}
+	state := &ViewTestState{
+		Items: []ViewItem{},
+	}
 	ctx := NewContext(state, 0, 0)
 	ve := NewViewEvaluator()
 
 	view := &ast.View{
-		Type: ast.ViewTypeFirst,
+		Source: "Items",
+		Pipeline: []ast.ViewOperation{
+			{
+				Type: ast.ViewOpFirst,
+			},
+		},
 	}
 
-	result, err := ve.Compute(ctx, view, []interface{}{})
+	result, err := ve.Evaluate(ctx, view, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -484,21 +532,26 @@ func TestViewEvaluator_First_Empty(t *testing.T) {
 }
 
 func TestViewEvaluator_Last(t *testing.T) {
-	state := &ViewTestState{}
+	state := &ViewTestState{
+		Items: []ViewItem{
+			{ID: "i1", Name: "First"},
+			{ID: "i2", Name: "Second"},
+			{ID: "i3", Name: "Third"},
+		},
+	}
 	ctx := NewContext(state, 0, 0)
 	ve := NewViewEvaluator()
 
-	entities := []interface{}{
-		ViewItem{ID: "i1", Name: "First"},
-		ViewItem{ID: "i2", Name: "Second"},
-		ViewItem{ID: "i3", Name: "Third"},
-	}
-
 	view := &ast.View{
-		Type: ast.ViewTypeLast,
+		Source: "Items",
+		Pipeline: []ast.ViewOperation{
+			{
+				Type: ast.ViewOpLast,
+			},
+		},
 	}
 
-	result, err := ve.Compute(ctx, view, entities)
+	result, err := ve.Evaluate(ctx, view, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -510,15 +563,22 @@ func TestViewEvaluator_Last(t *testing.T) {
 }
 
 func TestViewEvaluator_Last_Empty(t *testing.T) {
-	state := &ViewTestState{}
+	state := &ViewTestState{
+		Items: []ViewItem{},
+	}
 	ctx := NewContext(state, 0, 0)
 	ve := NewViewEvaluator()
 
 	view := &ast.View{
-		Type: ast.ViewTypeLast,
+		Source: "Items",
+		Pipeline: []ast.ViewOperation{
+			{
+				Type: ast.ViewOpLast,
+			},
+		},
 	}
 
-	result, err := ve.Compute(ctx, view, []interface{}{})
+	result, err := ve.Evaluate(ctx, view, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -529,23 +589,28 @@ func TestViewEvaluator_Last_Empty(t *testing.T) {
 }
 
 func TestViewEvaluator_GroupBy(t *testing.T) {
-	state := &ViewTestState{}
+	state := &ViewTestState{
+		Players: []ViewPlayer{
+			{ID: "p1", Name: "Alice", Team: "Red"},
+			{ID: "p2", Name: "Bob", Team: "Blue"},
+			{ID: "p3", Name: "Charlie", Team: "Red"},
+			{ID: "p4", Name: "Diana", Team: "Blue"},
+		},
+	}
 	ctx := NewContext(state, 0, 0)
 	ve := NewViewEvaluator()
 
-	entities := []interface{}{
-		ViewPlayer{ID: "p1", Name: "Alice", Team: "Red"},
-		ViewPlayer{ID: "p2", Name: "Bob", Team: "Blue"},
-		ViewPlayer{ID: "p3", Name: "Charlie", Team: "Red"},
-		ViewPlayer{ID: "p4", Name: "Diana", Team: "Blue"},
-	}
-
 	view := &ast.View{
-		Type:       ast.ViewTypeGroupBy,
-		GroupField: "Team",
+		Source: "Players",
+		Pipeline: []ast.ViewOperation{
+			{
+				Type:       ast.ViewOpGroupBy,
+				GroupField: "Team",
+			},
+		},
 	}
 
-	result, err := ve.Compute(ctx, view, entities)
+	result, err := ve.Evaluate(ctx, view, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -563,60 +628,30 @@ func TestViewEvaluator_GroupBy(t *testing.T) {
 	}
 }
 
-func TestViewEvaluator_GroupBy_WithAggregate(t *testing.T) {
-	state := &ViewTestState{}
+func TestViewEvaluator_Distinct(t *testing.T) {
+	state := &ViewTestState{
+		Items: []ViewItem{
+			{ID: "i1", Category: "Weapon"},
+			{ID: "i2", Category: "Armor"},
+			{ID: "i3", Category: "Weapon"},
+			{ID: "i4", Category: "Potion"},
+			{ID: "i5", Category: "Armor"},
+		},
+	}
 	ctx := NewContext(state, 0, 0)
 	ve := NewViewEvaluator()
 
-	entities := []interface{}{
-		ViewPlayer{ID: "p1", Score: 100, Team: "Red"},
-		ViewPlayer{ID: "p2", Score: 200, Team: "Blue"},
-		ViewPlayer{ID: "p3", Score: 150, Team: "Red"},
-		ViewPlayer{ID: "p4", Score: 300, Team: "Blue"},
-	}
-
 	view := &ast.View{
-		Type:       ast.ViewTypeGroupBy,
-		GroupField: "Team",
-		Aggregate: &ast.View{
-			Type:  ast.ViewTypeSum,
-			Field: "$.Score",
+		Source: "Items",
+		Pipeline: []ast.ViewOperation{
+			{
+				Type:  ast.ViewOpDistinct,
+				Field: "Category",
+			},
 		},
 	}
 
-	result, err := ve.Compute(ctx, view, entities)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	groups := result.(map[interface{}]interface{})
-	if groups["Red"] != 250.0 {
-		t.Errorf("expected Red team sum 250, got %v", groups["Red"])
-	}
-	if groups["Blue"] != 500.0 {
-		t.Errorf("expected Blue team sum 500, got %v", groups["Blue"])
-	}
-}
-
-func TestViewEvaluator_Distinct(t *testing.T) {
-	state := &ViewTestState{}
-	ctx := NewContext(state, 0, 0)
-	ve := NewViewEvaluator()
-
-	entities := []interface{}{
-		ViewItem{ID: "i1", Category: "Weapon"},
-		ViewItem{ID: "i2", Category: "Armor"},
-		ViewItem{ID: "i3", Category: "Weapon"},
-		ViewItem{ID: "i4", Category: "Potion"},
-		ViewItem{ID: "i5", Category: "Armor"},
-	}
-
-	view := &ast.View{
-		Type:  ast.ViewTypeDistinct,
-		Field: "$.Category",
-	}
-
-	result, err := ve.Compute(ctx, view, entities)
+	result, err := ve.Evaluate(ctx, view, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -628,24 +663,29 @@ func TestViewEvaluator_Distinct(t *testing.T) {
 }
 
 func TestViewEvaluator_Map(t *testing.T) {
-	state := &ViewTestState{}
+	state := &ViewTestState{
+		Items: []ViewItem{
+			{ID: "i1", Name: "Sword", Price: 100},
+			{ID: "i2", Name: "Shield", Price: 75},
+		},
+	}
 	ctx := NewContext(state, 0, 0)
 	ve := NewViewEvaluator()
 
-	entities := []interface{}{
-		ViewItem{ID: "i1", Name: "Sword", Price: 100},
-		ViewItem{ID: "i2", Name: "Shield", Price: 75},
-	}
-
 	view := &ast.View{
-		Type: ast.ViewTypeMap,
-		Transform: map[string]interface{}{
-			"itemName":  "$.Name",
-			"itemPrice": "$.Price",
+		Source: "Items",
+		Pipeline: []ast.ViewOperation{
+			{
+				Type: ast.ViewOpMap,
+				Fields: map[string]interface{}{
+					"itemName":  "$.Name",
+					"itemPrice": "$.Price",
+				},
+			},
 		},
 	}
 
-	result, err := ve.Compute(ctx, view, entities)
+	result, err := ve.Evaluate(ctx, view, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -663,23 +703,28 @@ func TestViewEvaluator_Map(t *testing.T) {
 	}
 }
 
-func TestViewEvaluator_Sort_Ascending(t *testing.T) {
-	state := &ViewTestState{}
+func TestViewEvaluator_OrderBy_Ascending(t *testing.T) {
+	state := &ViewTestState{
+		Items: []ViewItem{
+			{ID: "i1", Price: 100},
+			{ID: "i2", Price: 25},
+			{ID: "i3", Price: 75},
+		},
+	}
 	ctx := NewContext(state, 0, 0)
 	ve := NewViewEvaluator()
 
-	entities := []interface{}{
-		ViewItem{ID: "i1", Price: 100},
-		ViewItem{ID: "i2", Price: 25},
-		ViewItem{ID: "i3", Price: 75},
-	}
-
 	view := &ast.View{
-		Type: ast.ViewTypeSort,
-		By:   "$.Price",
+		Source: "Items",
+		Pipeline: []ast.ViewOperation{
+			{
+				Type: ast.ViewOpOrderBy,
+				By:   "$.Price",
+			},
+		},
 	}
 
-	result, err := ve.Compute(ctx, view, entities)
+	result, err := ve.Evaluate(ctx, view, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -700,24 +745,29 @@ func TestViewEvaluator_Sort_Ascending(t *testing.T) {
 	}
 }
 
-func TestViewEvaluator_Sort_Descending(t *testing.T) {
-	state := &ViewTestState{}
+func TestViewEvaluator_OrderBy_Descending(t *testing.T) {
+	state := &ViewTestState{
+		Items: []ViewItem{
+			{ID: "i1", Price: 100},
+			{ID: "i2", Price: 25},
+			{ID: "i3", Price: 75},
+		},
+	}
 	ctx := NewContext(state, 0, 0)
 	ve := NewViewEvaluator()
 
-	entities := []interface{}{
-		ViewItem{ID: "i1", Price: 100},
-		ViewItem{ID: "i2", Price: 25},
-		ViewItem{ID: "i3", Price: 75},
-	}
-
 	view := &ast.View{
-		Type:  ast.ViewTypeSort,
-		By:    "$.Price",
-		Order: "desc",
+		Source: "Items",
+		Pipeline: []ast.ViewOperation{
+			{
+				Type:  ast.ViewOpOrderBy,
+				By:    "$.Price",
+				Order: "desc",
+			},
+		},
 	}
 
-	result, err := ve.Compute(ctx, view, entities)
+	result, err := ve.Evaluate(ctx, view, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -729,52 +779,61 @@ func TestViewEvaluator_Sort_Descending(t *testing.T) {
 	}
 }
 
-func TestViewEvaluator_Sort_WithLimit(t *testing.T) {
-	state := &ViewTestState{}
+func TestViewEvaluator_Limit(t *testing.T) {
+	state := &ViewTestState{
+		Items: []ViewItem{
+			{ID: "i1"},
+			{ID: "i2"},
+			{ID: "i3"},
+			{ID: "i4"},
+		},
+	}
 	ctx := NewContext(state, 0, 0)
 	ve := NewViewEvaluator()
 
-	entities := []interface{}{
-		ViewItem{ID: "i1", Price: 100},
-		ViewItem{ID: "i2", Price: 25},
-		ViewItem{ID: "i3", Price: 75},
-		ViewItem{ID: "i4", Price: 50},
-	}
-
 	view := &ast.View{
-		Type:  ast.ViewTypeSort,
-		By:    "$.Price",
-		Limit: 2,
+		Source: "Items",
+		Pipeline: []ast.ViewOperation{
+			{
+				Type:  ast.ViewOpLimit,
+				Count: 2,
+			},
+		},
 	}
 
-	result, err := ve.Compute(ctx, view, entities)
+	result, err := ve.Evaluate(ctx, view, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	sorted := result.([]interface{})
-	if len(sorted) != 2 {
-		t.Errorf("expected 2 items (limited), got %d", len(sorted))
+	items := result.([]interface{})
+	if len(items) != 2 {
+		t.Errorf("expected 2 items (limited), got %d", len(items))
 	}
 }
 
-func TestViewEvaluator_Sort_StringField(t *testing.T) {
-	state := &ViewTestState{}
+func TestViewEvaluator_OrderByString(t *testing.T) {
+	state := &ViewTestState{
+		Items: []ViewItem{
+			{ID: "i1", Name: "Zebra"},
+			{ID: "i2", Name: "Apple"},
+			{ID: "i3", Name: "Mango"},
+		},
+	}
 	ctx := NewContext(state, 0, 0)
 	ve := NewViewEvaluator()
 
-	entities := []interface{}{
-		ViewItem{ID: "i1", Name: "Zebra"},
-		ViewItem{ID: "i2", Name: "Apple"},
-		ViewItem{ID: "i3", Name: "Mango"},
-	}
-
 	view := &ast.View{
-		Type: ast.ViewTypeSort,
-		By:   "$.Name",
+		Source: "Items",
+		Pipeline: []ast.ViewOperation{
+			{
+				Type: ast.ViewOpOrderBy,
+				By:   "$.Name",
+			},
+		},
 	}
 
-	result, err := ve.Compute(ctx, view, entities)
+	result, err := ve.Evaluate(ctx, view, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -786,21 +845,26 @@ func TestViewEvaluator_Sort_StringField(t *testing.T) {
 	}
 }
 
-func TestViewEvaluator_Sort_SingleElement(t *testing.T) {
-	state := &ViewTestState{}
+func TestViewEvaluator_OrderBySingle(t *testing.T) {
+	state := &ViewTestState{
+		Items: []ViewItem{
+			{ID: "i1", Price: 100},
+		},
+	}
 	ctx := NewContext(state, 0, 0)
 	ve := NewViewEvaluator()
 
-	entities := []interface{}{
-		ViewItem{ID: "i1", Price: 100},
-	}
-
 	view := &ast.View{
-		Type: ast.ViewTypeSort,
-		By:   "$.Price",
+		Source: "Items",
+		Pipeline: []ast.ViewOperation{
+			{
+				Type: ast.ViewOpOrderBy,
+				By:   "$.Price",
+			},
+		},
 	}
 
-	result, err := ve.Compute(ctx, view, entities)
+	result, err := ve.Evaluate(ctx, view, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -811,115 +875,106 @@ func TestViewEvaluator_Sort_SingleElement(t *testing.T) {
 	}
 }
 
-func TestViewEvaluator_Distance(t *testing.T) {
+func TestViewEvaluator_Pipeline_FilterOrderByLimit(t *testing.T) {
 	state := &ViewTestState{
-		FromPos: ast.GeoPoint{Lat: 47.4979, Lon: 19.0402}, // Budapest
-		ToPos:   ast.GeoPoint{Lat: 48.2082, Lon: 16.3738}, // Vienna
+		Items: []ViewItem{
+			{ID: "i1", Category: "Weapon", Price: 100},
+			{ID: "i2", Category: "Armor", Price: 50},
+			{ID: "i3", Category: "Weapon", Price: 200},
+			{ID: "i4", Category: "Weapon", Price: 150},
+		},
 	}
 	ctx := NewContext(state, 0, 0)
 	ve := NewViewEvaluator()
 
+	// Filter weapons, order by price desc, take top 2
 	view := &ast.View{
-		Type: ast.ViewTypeDistance,
-		From: "$.FromPos",
-		To:   "$.ToPos",
+		Source: "Items",
+		Pipeline: []ast.ViewOperation{
+			{
+				Type: ast.ViewOpFilter,
+				Where: &ast.WhereClause{
+					Field: "Category",
+					Op:    "==",
+					Value: "Weapon",
+				},
+			},
+			{
+				Type:  ast.ViewOpOrderBy,
+				By:    "$.Price",
+				Order: "desc",
+			},
+			{
+				Type:  ast.ViewOpLimit,
+				Count: 2,
+			},
+		},
 	}
 
-	result, err := ve.Compute(ctx, view, nil)
+	result, err := ve.Evaluate(ctx, view, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	distance := result.(float64)
-	// Budapest to Vienna is approximately 215km
-	if distance < 200000 || distance > 250000 {
-		t.Errorf("expected distance ~215000 meters, got %v", distance)
+	items := result.([]interface{})
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(items))
+	}
+
+	first := items[0].(ViewItem)
+	if first.Price != 200 {
+		t.Errorf("expected first price 200 (most expensive weapon), got %v", first.Price)
+	}
+
+	second := items[1].(ViewItem)
+	if second.Price != 150 {
+		t.Errorf("expected second price 150, got %v", second.Price)
 	}
 }
 
-func TestViewEvaluator_Distance_Kilometers(t *testing.T) {
+func TestViewEvaluator_UnknownOperation(t *testing.T) {
 	state := &ViewTestState{
-		FromPos: ast.GeoPoint{Lat: 47.4979, Lon: 19.0402},
-		ToPos:   ast.GeoPoint{Lat: 48.2082, Lon: 16.3738},
+		Items: []ViewItem{{ID: "i1"}},
 	}
 	ctx := NewContext(state, 0, 0)
 	ve := NewViewEvaluator()
 
 	view := &ast.View{
-		Type: ast.ViewTypeDistance,
-		From: "$.FromPos",
-		To:   "$.ToPos",
-		Unit: "km",
+		Source: "Items",
+		Pipeline: []ast.ViewOperation{
+			{
+				Type: "Unknown",
+			},
+		},
 	}
 
-	result, err := ve.Compute(ctx, view, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	distance := result.(float64)
-	if distance < 200 || distance > 250 {
-		t.Errorf("expected distance ~215 km, got %v", distance)
-	}
-}
-
-func TestViewEvaluator_Distance_SamePoint(t *testing.T) {
-	point := ast.GeoPoint{Lat: 47.4979, Lon: 19.0402}
-	state := &ViewTestState{
-		FromPos: point,
-		ToPos:   point,
-	}
-	ctx := NewContext(state, 0, 0)
-	ve := NewViewEvaluator()
-
-	view := &ast.View{
-		Type: ast.ViewTypeDistance,
-		From: "$.FromPos",
-		To:   "$.ToPos",
-	}
-
-	result, err := ve.Compute(ctx, view, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	distance := result.(float64)
-	if distance != 0 {
-		t.Errorf("expected distance 0 for same point, got %v", distance)
-	}
-}
-
-func TestViewEvaluator_UnknownType(t *testing.T) {
-	state := &ViewTestState{}
-	ctx := NewContext(state, 0, 0)
-	ve := NewViewEvaluator()
-
-	view := &ast.View{
-		Type: "Unknown",
-	}
-
-	_, err := ve.Compute(ctx, view, []interface{}{})
+	_, err := ve.Evaluate(ctx, view, nil)
 	if err == nil {
-		t.Error("expected error for unknown view type")
+		t.Error("expected error for unknown operation type")
 	}
 }
 
 func TestViewEvaluator_MaxMin_NonNumericField(t *testing.T) {
-	state := &ViewTestState{}
+	state := &ViewTestState{
+		Items: []ViewItem{
+			{ID: "i1", Name: "Sword"},
+			{ID: "i2", Name: "Shield"},
+		},
+	}
 	ctx := NewContext(state, 0, 0)
 	ve := NewViewEvaluator()
 
-	entities := []interface{}{
-		ViewItem{ID: "i1", Name: "Sword"},
-		ViewItem{ID: "i2", Name: "Shield"},
-	}
-
 	view := &ast.View{
-		Type:  ast.ViewTypeMax,
-		Field: "$.Name", // String field
+		Source: "Items",
+		Pipeline: []ast.ViewOperation{
+			{
+				Type:  ast.ViewOpMax,
+				Field: "Name", // String field
+			},
+		},
 	}
 
-	result, err := ve.Compute(ctx, view, entities)
+	result, err := ve.Evaluate(ctx, view, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

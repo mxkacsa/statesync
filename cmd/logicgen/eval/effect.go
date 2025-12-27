@@ -2,14 +2,15 @@ package eval
 
 import (
 	"fmt"
-	"reflect"
 
 	"github.com/mxkacsa/statesync/cmd/logicgen/ast"
 )
 
-// EffectEvaluator applies effects to state
+// EffectEvaluator applies effects to state.
+// Effects are batch operations - the engine handles per-entity iteration.
 type EffectEvaluator struct {
 	transformEval  *TransformEvaluator
+	viewEval       *ViewEvaluator
 	ruleController RuleController
 }
 
@@ -17,6 +18,7 @@ type EffectEvaluator struct {
 func NewEffectEvaluator() *EffectEvaluator {
 	return &EffectEvaluator{
 		transformEval: NewTransformEvaluator(),
+		viewEval:      NewViewEvaluator(),
 	}
 }
 
@@ -25,425 +27,144 @@ func (ee *EffectEvaluator) SetRuleController(rc RuleController) {
 	ee.ruleController = rc
 }
 
-// Apply applies an effect to the state
-func (ee *EffectEvaluator) Apply(ctx *Context, effect *ast.Effect) error {
-	switch effect.Type {
-	case ast.EffectTypeSet:
-		return ee.applySet(ctx, effect)
-	case ast.EffectTypeIncrement:
-		return ee.applyIncrement(ctx, effect)
-	case ast.EffectTypeDecrement:
-		return ee.applyDecrement(ctx, effect)
-	case ast.EffectTypeAppend:
-		return ee.applyAppend(ctx, effect)
-	case ast.EffectTypeRemove:
-		return ee.applyRemove(ctx, effect)
-	case ast.EffectTypeClear:
-		return ee.applyClear(ctx, effect)
-	case ast.EffectTypeTransform:
-		return ee.applyTransform(ctx, effect)
-	case ast.EffectTypeEmit:
-		return ee.applyEmit(ctx, effect)
-	case ast.EffectTypeSpawn:
-		return ee.applySpawn(ctx, effect)
-	case ast.EffectTypeDestroy:
-		return ee.applyDestroy(ctx, effect)
-	case ast.EffectTypeIf:
-		return ee.applyIf(ctx, effect)
-	case ast.EffectTypeSequence:
-		return ee.applySequence(ctx, effect)
-	case ast.EffectTypeEnableRule:
-		return ee.applyEnableRule(ctx, effect)
-	case ast.EffectTypeDisableRule:
-		return ee.applyDisableRule(ctx, effect)
-	case ast.EffectTypeEnableTrigger:
-		return ee.applyEnableTrigger(ctx, effect)
-	case ast.EffectTypeDisableTrigger:
-		return ee.applyDisableTrigger(ctx, effect)
-	case ast.EffectTypeResetTimer:
-		return ee.applyResetTimer(ctx, effect)
-	default:
-		return fmt.Errorf("unknown effect type: %s", effect.Type)
-	}
-}
-
-// applySet sets a value at a path
-func (ee *EffectEvaluator) applySet(ctx *Context, effect *ast.Effect) error {
-	value, err := ctx.Resolve(effect.Value)
-	if err != nil {
-		return fmt.Errorf("resolve value: %w", err)
-	}
-
-	return ctx.SetPath(effect.Path, value)
-}
-
-// applyIncrement increments a numeric value
-func (ee *EffectEvaluator) applyIncrement(ctx *Context, effect *ast.Effect) error {
-	current, err := ctx.ResolvePath(effect.Path)
-	if err != nil {
-		return err
-	}
-
-	increment, err := ctx.Resolve(effect.Value)
-	if err != nil {
-		return err
-	}
-
-	currentNum, ok := toFloat64(current)
+// Apply applies an effect to the state using the registry.
+// For batch effects, this resolves targets and iterates internally.
+func (ee *EffectEvaluator) Apply(ctx *Context, effect *ast.Effect, ruleViews map[string]*ast.View) error {
+	// Look up effect handler in registry
+	def, ok := GetEffect(string(effect.Type))
 	if !ok {
-		return fmt.Errorf("cannot increment non-numeric value")
+		return fmt.Errorf("unknown effect type: %s (not registered)", effect.Type)
 	}
 
-	incrementNum, ok := toFloat64(increment)
-	if !ok {
-		return fmt.Errorf("increment value must be numeric")
-	}
-
-	return ctx.SetPath(effect.Path, currentNum+incrementNum)
+	// Call the registered function
+	return def.Func(ee, ctx, effect, ruleViews)
 }
 
-// applyDecrement decrements a numeric value
-func (ee *EffectEvaluator) applyDecrement(ctx *Context, effect *ast.Effect) error {
-	current, err := ctx.ResolvePath(effect.Path)
-	if err != nil {
-		return err
+// resolveTargets resolves the targets for an effect from views
+func (ee *EffectEvaluator) resolveTargets(ctx *Context, effect *ast.Effect, ruleViews map[string]*ast.View) ([]interface{}, error) {
+	if effect.Targets == nil {
+		// No targets = apply to state directly (single operation)
+		return []interface{}{ctx.State}, nil
 	}
 
-	decrement, err := ctx.Resolve(effect.Value)
-	if err != nil {
-		return err
-	}
-
-	currentNum, ok := toFloat64(current)
-	if !ok {
-		return fmt.Errorf("cannot decrement non-numeric value")
-	}
-
-	decrementNum, ok := toFloat64(decrement)
-	if !ok {
-		return fmt.Errorf("decrement value must be numeric")
-	}
-
-	return ctx.SetPath(effect.Path, currentNum-decrementNum)
-}
-
-// applyAppend appends an item to an array
-func (ee *EffectEvaluator) applyAppend(ctx *Context, effect *ast.Effect) error {
-	current, err := ctx.ResolvePath(effect.Path)
-	if err != nil {
-		return err
-	}
-
-	item, err := ctx.Resolve(effect.Item)
-	if err != nil {
-		return err
-	}
-
-	// Get current slice and append
-	currentVal := reflect.ValueOf(current)
-	if currentVal.Kind() != reflect.Slice {
-		return fmt.Errorf("cannot append to non-slice")
-	}
-
-	itemVal := reflect.ValueOf(item)
-	if !itemVal.Type().AssignableTo(currentVal.Type().Elem()) {
-		if itemVal.Type().ConvertibleTo(currentVal.Type().Elem()) {
-			itemVal = itemVal.Convert(currentVal.Type().Elem())
-		} else {
-			return fmt.Errorf("item type mismatch")
-		}
-	}
-
-	newSlice := reflect.Append(currentVal, itemVal)
-	return ctx.SetPath(effect.Path, newSlice.Interface())
-}
-
-// applyRemove removes an item from an array
-func (ee *EffectEvaluator) applyRemove(ctx *Context, effect *ast.Effect) error {
-	current, err := ctx.ResolvePath(effect.Path)
-	if err != nil {
-		return err
-	}
-
-	currentVal := reflect.ValueOf(current)
-	if currentVal.Kind() != reflect.Slice {
-		return fmt.Errorf("cannot remove from non-slice")
-	}
-
-	// Remove by index
-	if effect.Index != nil {
-		index, err := ctx.Resolve(effect.Index)
-		if err != nil {
-			return err
-		}
-		idx, ok := toInt(index)
-		if !ok {
-			return fmt.Errorf("index must be integer")
-		}
-		if idx < 0 || idx >= currentVal.Len() {
-			return fmt.Errorf("index out of bounds")
-		}
-
-		newSlice := reflect.AppendSlice(
-			currentVal.Slice(0, idx),
-			currentVal.Slice(idx+1, currentVal.Len()),
-		)
-		return ctx.SetPath(effect.Path, newSlice.Interface())
-	}
-
-	// Remove by condition
-	if effect.Where != nil {
-		var keepIndices []int
-		for i := 0; i < currentVal.Len(); i++ {
-			elem := currentVal.Index(i).Interface()
-			matches, err := matchesWhere(ctx, elem, effect.Where)
+	// Check if targets is a view name
+	if viewName, ok := effect.Targets.(string); ok {
+		// Look up view in rule views
+		if view, exists := ruleViews[viewName]; exists {
+			result, err := ee.viewEval.Evaluate(ctx, view, nil)
 			if err != nil {
-				return err
+				return nil, fmt.Errorf("view %s: %w", viewName, err)
 			}
-			if !matches {
-				keepIndices = append(keepIndices, i)
+			entities, ok := toEntitySlice(result)
+			if !ok {
+				return nil, fmt.Errorf("view %s did not return entity list", viewName)
+			}
+			return entities, nil
+		}
+		// Also check if it's already computed in context
+		if viewResult, exists := ctx.Views[viewName]; exists {
+			entities, ok := toEntitySlice(viewResult)
+			if !ok {
+				return nil, fmt.Errorf("view %s did not return entity list", viewName)
+			}
+			return entities, nil
+		}
+		return nil, fmt.Errorf("view not found: %s", viewName)
+	}
+
+	// Check if targets is an inline view definition
+	if viewDef, ok := effect.Targets.(map[string]interface{}); ok {
+		view := &ast.View{}
+		if source, ok := viewDef["source"].(string); ok {
+			view.Source = source
+		}
+		if pipeline, ok := viewDef["pipeline"].([]interface{}); ok {
+			// Parse pipeline operations
+			for _, opRaw := range pipeline {
+				if opMap, ok := opRaw.(map[string]interface{}); ok {
+					op := ast.ViewOperation{}
+					if t, ok := opMap["type"].(string); ok {
+						op.Type = ast.ViewOperationType(t)
+					}
+					// TODO: Parse other operation fields
+					view.Pipeline = append(view.Pipeline, op)
+				}
 			}
 		}
-
-		newSlice := reflect.MakeSlice(currentVal.Type(), len(keepIndices), len(keepIndices))
-		for i, idx := range keepIndices {
-			newSlice.Index(i).Set(currentVal.Index(idx))
-		}
-		return ctx.SetPath(effect.Path, newSlice.Interface())
-	}
-
-	return nil
-}
-
-// applyClear clears an array or map
-func (ee *EffectEvaluator) applyClear(ctx *Context, effect *ast.Effect) error {
-	current, err := ctx.ResolvePath(effect.Path)
-	if err != nil {
-		return err
-	}
-
-	currentVal := reflect.ValueOf(current)
-	switch currentVal.Kind() {
-	case reflect.Slice:
-		newSlice := reflect.MakeSlice(currentVal.Type(), 0, 0)
-		return ctx.SetPath(effect.Path, newSlice.Interface())
-	case reflect.Map:
-		newMap := reflect.MakeMap(currentVal.Type())
-		return ctx.SetPath(effect.Path, newMap.Interface())
-	default:
-		return fmt.Errorf("cannot clear %s", currentVal.Kind())
-	}
-}
-
-// applyTransform applies a transform and saves the result
-func (ee *EffectEvaluator) applyTransform(ctx *Context, effect *ast.Effect) error {
-	if effect.Transform == nil {
-		return fmt.Errorf("transform is required")
-	}
-
-	result, err := ee.transformEval.Evaluate(ctx, effect.Transform)
-	if err != nil {
-		return fmt.Errorf("transform: %w", err)
-	}
-
-	return ctx.SetPath(effect.Path, result)
-}
-
-// applyEmit emits an event (placeholder - needs event system integration)
-func (ee *EffectEvaluator) applyEmit(ctx *Context, effect *ast.Effect) error {
-	// Build payload
-	payload := make(map[string]interface{})
-	for k, v := range effect.Payload {
-		resolved, err := ctx.Resolve(v)
+		result, err := ee.viewEval.Evaluate(ctx, view, nil)
 		if err != nil {
-			return fmt.Errorf("payload %s: %w", k, err)
+			return nil, err
 		}
-		payload[k] = resolved
+		entities, ok := toEntitySlice(result)
+		if !ok {
+			return nil, fmt.Errorf("inline view did not return entity list")
+		}
+		return entities, nil
 	}
 
-	// TODO: Integrate with actual event emission system
-	// For now, just log or store the event
-	_ = payload
-	_ = effect.Event
-	_ = effect.To
-
-	return nil
+	return nil, fmt.Errorf("invalid targets specification")
 }
 
-// applySpawn creates a new entity (placeholder - needs entity creation integration)
-func (ee *EffectEvaluator) applySpawn(ctx *Context, effect *ast.Effect) error {
-	// Build entity fields
-	fields := make(map[string]interface{})
-	for k, v := range effect.Fields {
-		resolved, err := ctx.Resolve(v)
+// Note: Effect implementations are now in effects_builtin.go
+// They are registered via the global registry and called through Apply
+
+// evaluateValueExpression evaluates a value expression in entity context
+func (ee *EffectEvaluator) evaluateValueExpression(ctx *Context, expr *ast.ValueExpression, ruleViews map[string]*ast.View) (interface{}, error) {
+	switch expr.Type {
+	case "literal":
+		return expr.Literal, nil
+
+	case "field":
+		return ctx.Resolve(string(expr.Field))
+
+	case "viewResult":
+		// Get the view
+		view, ok := ruleViews[expr.View]
+		if !ok {
+			return nil, fmt.Errorf("view not found: %s", expr.View)
+		}
+
+		// Resolve view params with self references
+		params := make(map[string]interface{})
+		for key, val := range expr.ViewParams {
+			resolved, err := ctx.Resolve(val)
+			if err != nil {
+				return nil, fmt.Errorf("param %s: %w", key, err)
+			}
+			params[key] = resolved
+		}
+
+		// Evaluate view with params
+		return ee.viewEval.Evaluate(ctx, view, params)
+
+	case "distance":
+		fromVal, err := ctx.Resolve(expr.From)
 		if err != nil {
-			return fmt.Errorf("field %s: %w", k, err)
+			return nil, fmt.Errorf("from: %w", err)
 		}
-		fields[k] = resolved
-	}
-
-	// TODO: Integrate with actual entity creation
-	_ = effect.Entity
-	_ = fields
-
-	return nil
-}
-
-// applyDestroy destroys entities (placeholder)
-func (ee *EffectEvaluator) applyDestroy(ctx *Context, effect *ast.Effect) error {
-	// TODO: Integrate with actual entity destruction
-	return nil
-}
-
-// applyIf applies a conditional effect
-func (ee *EffectEvaluator) applyIf(ctx *Context, effect *ast.Effect) error {
-	condition, err := ctx.Resolve(effect.Condition)
-	if err != nil {
-		return err
-	}
-
-	var condResult bool
-	switch v := condition.(type) {
-	case bool:
-		condResult = v
-	case *ast.Expression:
-		condResult, err = evaluateExpression(ctx, v)
+		toVal, err := ctx.Resolve(expr.To)
 		if err != nil {
-			return err
+			return nil, fmt.Errorf("to: %w", err)
 		}
+
+		fromPoint, err := toGeoPoint(fromVal)
+		if err != nil {
+			return nil, fmt.Errorf("from: %w", err)
+		}
+		toPoint, err := toGeoPoint(toVal)
+		if err != nil {
+			return nil, fmt.Errorf("to: %w", err)
+		}
+
+		return haversineDistance(fromPoint, toPoint), nil
+
+	case "transform":
+		if expr.Transform == nil {
+			return nil, fmt.Errorf("transform is required")
+		}
+		return ee.transformEval.Evaluate(ctx, expr.Transform)
+
 	default:
-		// Truthy check
-		condResult = condition != nil && condition != false && condition != 0 && condition != ""
+		return nil, fmt.Errorf("unknown value expression type: %s", expr.Type)
 	}
-
-	if condResult {
-		if effect.Then != nil {
-			return ee.Apply(ctx, effect.Then)
-		}
-	} else {
-		if effect.Else != nil {
-			return ee.Apply(ctx, effect.Else)
-		}
-	}
-
-	return nil
-}
-
-// applySequence applies a sequence of effects
-func (ee *EffectEvaluator) applySequence(ctx *Context, effect *ast.Effect) error {
-	for _, subEffect := range effect.Effects {
-		if err := ee.Apply(ctx, subEffect); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// matchesWhere checks if an entity matches a where clause
-func matchesWhere(ctx *Context, entity interface{}, where *ast.WhereClause) (bool, error) {
-	val := reflect.ValueOf(entity)
-	if val.Kind() == reflect.Ptr {
-		val = val.Elem()
-	}
-	if val.Kind() != reflect.Struct {
-		return false, nil
-	}
-
-	field := val.FieldByName(where.Field)
-	if !field.IsValid() || !field.CanInterface() {
-		return false, nil
-	}
-
-	compareVal, err := ctx.Resolve(where.Value)
-	if err != nil {
-		return false, err
-	}
-
-	return compare(field.Interface(), compareVal, where.Op)
-}
-
-// toInt converts a value to int
-func toInt(v interface{}) (int, bool) {
-	switch val := v.(type) {
-	case int:
-		return val, true
-	case int32:
-		return int(val), true
-	case int64:
-		return int(val), true
-	case float64:
-		return int(val), true
-	case float32:
-		return int(val), true
-	default:
-		return 0, false
-	}
-}
-
-// applyEnableRule enables a rule by name
-func (ee *EffectEvaluator) applyEnableRule(ctx *Context, effect *ast.Effect) error {
-	if ee.ruleController == nil {
-		return fmt.Errorf("rule controller not set")
-	}
-	if effect.Rule == "" {
-		return fmt.Errorf("rule name is required for EnableRule effect")
-	}
-	if !ee.ruleController.EnableRule(effect.Rule) {
-		return fmt.Errorf("rule not found: %s", effect.Rule)
-	}
-	return nil
-}
-
-// applyDisableRule disables a rule by name
-func (ee *EffectEvaluator) applyDisableRule(ctx *Context, effect *ast.Effect) error {
-	if ee.ruleController == nil {
-		return fmt.Errorf("rule controller not set")
-	}
-	if effect.Rule == "" {
-		return fmt.Errorf("rule name is required for DisableRule effect")
-	}
-	if !ee.ruleController.DisableRule(effect.Rule) {
-		return fmt.Errorf("rule not found: %s", effect.Rule)
-	}
-	return nil
-}
-
-// applyEnableTrigger enables a trigger by rule name
-func (ee *EffectEvaluator) applyEnableTrigger(ctx *Context, effect *ast.Effect) error {
-	if ee.ruleController == nil {
-		return fmt.Errorf("rule controller not set")
-	}
-	if effect.Rule == "" {
-		return fmt.Errorf("rule name is required for EnableTrigger effect")
-	}
-	if !ee.ruleController.EnableTrigger(effect.Rule) {
-		return fmt.Errorf("trigger not found for rule: %s", effect.Rule)
-	}
-	return nil
-}
-
-// applyDisableTrigger disables a trigger by rule name
-func (ee *EffectEvaluator) applyDisableTrigger(ctx *Context, effect *ast.Effect) error {
-	if ee.ruleController == nil {
-		return fmt.Errorf("rule controller not set")
-	}
-	if effect.Rule == "" {
-		return fmt.Errorf("rule name is required for DisableTrigger effect")
-	}
-	if !ee.ruleController.DisableTrigger(effect.Rule) {
-		return fmt.Errorf("trigger not found for rule: %s", effect.Rule)
-	}
-	return nil
-}
-
-// applyResetTimer resets the timer for a rule
-func (ee *EffectEvaluator) applyResetTimer(ctx *Context, effect *ast.Effect) error {
-	if ee.ruleController == nil {
-		return fmt.Errorf("rule controller not set")
-	}
-	if effect.Rule == "" {
-		return fmt.Errorf("rule name is required for ResetTimer effect")
-	}
-	ee.ruleController.ResetTimer(effect.Rule)
-	return nil
 }

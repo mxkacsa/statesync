@@ -9,19 +9,33 @@ import (
 
 // RulesEngine executes all defined rules
 type RulesEngine struct {
-	state *{{.StateType}}
-	tick uint64
-	lastTick time.Time
-	views map[string]interface{}
+	state      *{{.StateType}}
+	tick       uint64
+	lastTick   time.Time
+	views      map[string]interface{}
+	eventRules map[string][]func(context.Context, *Context) error
+	evalCtx    *Context // Reusable context to reduce allocations
 }
 
 // NewRulesEngine creates a new rules engine
 func NewRulesEngine(state *{{.StateType}}) *RulesEngine {
-	return &RulesEngine{
-		state: state,
-		views: make(map[string]interface{}),
+	r := &RulesEngine{
+		state:      state,
+		views:      make(map[string]interface{}),
+		eventRules: make(map[string][]func(context.Context, *Context) error),
+		evalCtx: &Context{
+			Params: make(map[string]interface{}),
+		},
 	}
+	r.evalCtx.views = r.views
+	r.registerEventRules()
+	return r
 }
+
+// registerEventRules registers event-based rules for fast lookup
+func (r *RulesEngine) registerEventRules() {
+{{range .Rules}}{{if eq .TriggerType "event"}}	r.eventRules["{{.EventName}}"] = append(r.eventRules["{{.EventName}}"], r.rule_{{.FuncName}})
+{{end}}{{end}}}
 
 // Context provides runtime context for rule evaluation
 type Context struct {
@@ -61,43 +75,42 @@ func (r *RulesEngine) Tick(ctx context.Context) error {
 	r.lastTick = now
 	r.tick++
 
-	evalCtx := &Context{
-		Tick:      r.tick,
-		DeltaTime: dt,
-		Params:    make(map[string]interface{}),
-		views:     r.views,
-	}
+	// Reuse context, clear params
+	r.evalCtx.Tick = r.tick
+	r.evalCtx.DeltaTime = dt
+	r.evalCtx.Event = nil
+	clear(r.evalCtx.Params)
 
-	return r.processTick(ctx, evalCtx)
+	return r.processTick(ctx, r.evalCtx)
 }
 
 // TickWithDelta processes one tick with explicit delta time
 func (r *RulesEngine) TickWithDelta(ctx context.Context, dt time.Duration) error {
 	r.tick++
-	evalCtx := &Context{
-		Tick:      r.tick,
-		DeltaTime: dt,
-		Params:    make(map[string]interface{}),
-		views:     r.views,
-	}
-	return r.processTick(ctx, evalCtx)
+
+	// Reuse context, clear params
+	r.evalCtx.Tick = r.tick
+	r.evalCtx.DeltaTime = dt
+	r.evalCtx.Event = nil
+	clear(r.evalCtx.Params)
+
+	return r.processTick(ctx, r.evalCtx)
 }
 
 // HandleEvent processes an event
 func (r *RulesEngine) HandleEvent(ctx context.Context, event *Event) error {
-	evalCtx := &Context{
-		Tick:      r.tick,
-		DeltaTime: 0,
-		Event:     event,
-		Params:    make(map[string]interface{}),
-		views:     r.views,
-	}
+	// Reuse context, clear params
+	r.evalCtx.Tick = r.tick
+	r.evalCtx.DeltaTime = 0
+	r.evalCtx.Event = event
+	clear(r.evalCtx.Params)
+
 	if event.Params != nil {
 		for k, v := range event.Params {
-			evalCtx.Params[k] = v
+			r.evalCtx.Params[k] = v
 		}
 	}
-	return r.processEvent(ctx, evalCtx)
+	return r.processEvent(ctx, r.evalCtx)
 }
 
 // processTick executes all tick-based rules
@@ -106,26 +119,31 @@ func (r *RulesEngine) processTick(ctx context.Context, evalCtx *Context) error {
 	views := r.views
 	_ = state
 	_ = views
-{{range .Rules}}
+{{range .Rules}}{{if ne .TriggerType "event"}}
 	// Rule: {{.Name}}
 	if err := r.rule_{{.FuncName}}(ctx, evalCtx); err != nil {
 		return fmt.Errorf("rule {{.Name}}: %w", err)
 	}
-{{end}}
+{{end}}{{end}}
 	return nil
 }
 
-// processEvent executes all event-based rules
+// processEvent executes only event-based rules matching the event
 func (r *RulesEngine) processEvent(ctx context.Context, evalCtx *Context) error {
-	state := r.state
-	views := r.views
-	_ = state
-	_ = views
-{{range .Rules}}
-	if err := r.rule_{{.FuncName}}(ctx, evalCtx); err != nil {
-		return fmt.Errorf("rule {{.Name}}: %w", err)
+	if evalCtx.Event == nil {
+		return nil
 	}
-{{end}}
+
+	rules, ok := r.eventRules[evalCtx.Event.Name]
+	if !ok {
+		return nil // No rules for this event
+	}
+
+	for _, rule := range rules {
+		if err := rule(ctx, evalCtx); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -155,16 +173,65 @@ func (r *RulesEngine) rule_{{.FuncName}}(ctx context.Context, evalCtx *Context) 
 }
 {{end}}
 
-// Helper functions
-
-func haversineDistance(from, to interface{}) float64 {
-	// Implement haversine distance calculation
-	return 0
+// GeoPoint represents a GPS coordinate
+type GeoPoint struct {
+	Lat float64
+	Lon float64
 }
 
-func moveTowards(current, target interface{}, distance float64) interface{} {
-	// Implement move towards calculation
-	return current
+// haversineDistance calculates the distance between two GPS points in meters
+func haversineDistance(from, to GeoPoint) float64 {
+	const earthRadiusMeters = 6371000.0
+	const degreesToRadians = math.Pi / 180.0
+
+	lat1 := from.Lat * degreesToRadians
+	lat2 := to.Lat * degreesToRadians
+	deltaLat := (to.Lat - from.Lat) * degreesToRadians
+	deltaLon := (to.Lon - from.Lon) * degreesToRadians
+
+	a := math.Sin(deltaLat/2)*math.Sin(deltaLat/2) +
+		math.Cos(lat1)*math.Cos(lat2)*
+			math.Sin(deltaLon/2)*math.Sin(deltaLon/2)
+	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+
+	return earthRadiusMeters * c
+}
+
+// normalizeLon normalizes longitude to [-180, 180] range
+func normalizeLon(lon float64) float64 {
+	for lon > 180 {
+		lon -= 360
+	}
+	for lon < -180 {
+		lon += 360
+	}
+	return lon
+}
+
+// moveTowards moves a point towards a target by a distance in meters
+func moveTowards(current, target GeoPoint, distance float64) GeoPoint {
+	totalDist := haversineDistance(current, target)
+	if totalDist <= 0 || distance <= 0 {
+		return current
+	}
+	if distance >= totalDist {
+		return target
+	}
+
+	ratio := distance / totalDist
+
+	// Handle longitude wrap-around at +/-180
+	deltaLon := target.Lon - current.Lon
+	if deltaLon > 180 {
+		deltaLon -= 360
+	} else if deltaLon < -180 {
+		deltaLon += 360
+	}
+
+	return GeoPoint{
+		Lat: current.Lat + (target.Lat-current.Lat)*ratio,
+		Lon: normalizeLon(current.Lon + deltaLon*ratio),
+	}
 }
 `
 

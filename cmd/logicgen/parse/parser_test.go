@@ -15,13 +15,15 @@ func TestParser_ParseSingleRule(t *testing.T) {
 			"type": "OnTick",
 			"interval": 1000
 		},
-		"selector": {
-			"type": "All",
-			"entity": "Players"
+		"views": {
+			"allPlayers": {
+				"source": "Players"
+			}
 		},
 		"effects": [
 			{
 				"type": "Increment",
+				"targets": "allPlayers",
 				"path": "$.Score",
 				"value": 1
 			}
@@ -60,15 +62,12 @@ func TestParser_ParseSingleRule(t *testing.T) {
 		t.Errorf("expected interval 1000, got %d", rule.Trigger.Interval)
 	}
 
-	// Check selector
-	if rule.Selector == nil {
-		t.Fatal("expected selector to be set")
+	// Check views
+	if rule.Views == nil || rule.Views["allPlayers"] == nil {
+		t.Fatal("expected views to be set")
 	}
-	if rule.Selector.Type != ast.SelectorTypeAll {
-		t.Errorf("expected selector type 'All', got '%s'", rule.Selector.Type)
-	}
-	if rule.Selector.Entity != "Players" {
-		t.Errorf("expected entity 'Players', got '%s'", rule.Selector.Entity)
+	if rule.Views["allPlayers"].Source != "Players" {
+		t.Errorf("expected source 'Players', got '%s'", rule.Views["allPlayers"].Source)
 	}
 
 	// Check effects
@@ -185,56 +184,6 @@ func TestParser_ParseTriggerTypes(t *testing.T) {
 	}
 }
 
-func TestParser_ParseSelectorTypes(t *testing.T) {
-	tests := []struct {
-		name         string
-		selectorJSON string
-		expected     ast.SelectorType
-	}{
-		{
-			name:         "All",
-			selectorJSON: `{"type": "All", "entity": "Players"}`,
-			expected:     ast.SelectorTypeAll,
-		},
-		{
-			name:         "Filter",
-			selectorJSON: `{"type": "Filter", "entity": "Players", "where": {"Status": "Active"}}`,
-			expected:     ast.SelectorTypeFilter,
-		},
-		{
-			name:         "Single",
-			selectorJSON: `{"type": "Single", "entity": "Players", "id": "param:playerId"}`,
-			expected:     ast.SelectorTypeSingle,
-		},
-		{
-			name:         "Nearest",
-			selectorJSON: `{"type": "Nearest", "entity": "Enemies", "origin": "$.Player.Position", "limit": 5}`,
-			expected:     ast.SelectorTypeNearest,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			input := []byte(`{
-				"name": "TestRule",
-				"trigger": {"type": "OnTick"},
-				"selector": ` + tt.selectorJSON + `,
-				"effects": []
-			}`)
-
-			parser := NewParser()
-			ruleSet, err := parser.Parse(input, "test.json")
-			if err != nil {
-				t.Fatalf("Parse failed: %v", err)
-			}
-
-			if ruleSet.Rules[0].Selector.Type != tt.expected {
-				t.Errorf("expected selector type '%s', got '%s'", tt.expected, ruleSet.Rules[0].Selector.Type)
-			}
-		})
-	}
-}
-
 func TestParser_ParseEffectTypes(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -252,9 +201,9 @@ func TestParser_ParseEffectTypes(t *testing.T) {
 			expected:   ast.EffectTypeIncrement,
 		},
 		{
-			name:       "Append",
-			effectJSON: `{"type": "Append", "path": "$.Items", "item": {"id": "sword"}}`,
-			expected:   ast.EffectTypeAppend,
+			name:       "Decrement",
+			effectJSON: `{"type": "Decrement", "path": "$.Score", "value": 5}`,
+			expected:   ast.EffectTypeDecrement,
 		},
 		{
 			name:       "Emit",
@@ -291,11 +240,23 @@ func TestParser_ParseViews(t *testing.T) {
 	input := []byte(`{
 		"name": "TestRule",
 		"trigger": {"type": "OnTick"},
-		"selector": {"type": "All", "entity": "Players"},
 		"views": {
-			"totalScore": {"type": "Sum", "field": "$.Score"},
-			"playerCount": {"type": "Count"},
-			"maxHealth": {"type": "Max", "field": "$.Health"}
+			"allPlayers": {
+				"source": "Players"
+			},
+			"highScorers": {
+				"source": "Players",
+				"pipeline": [
+					{"type": "Filter", "where": {"field": "Score", "op": ">=", "value": 100}}
+				]
+			},
+			"topScorer": {
+				"source": "Players",
+				"pipeline": [
+					{"type": "OrderBy", "by": "Score", "order": "desc"},
+					{"type": "First"}
+				]
+			}
 		},
 		"effects": []
 	}`)
@@ -311,14 +272,14 @@ func TestParser_ParseViews(t *testing.T) {
 		t.Fatalf("expected 3 views, got %d", len(rule.Views))
 	}
 
-	if rule.Views["totalScore"] == nil || rule.Views["totalScore"].Type != ast.ViewTypeSum {
-		t.Error("expected 'totalScore' view with type Sum")
+	if rule.Views["allPlayers"] == nil || rule.Views["allPlayers"].Source != "Players" {
+		t.Error("expected 'allPlayers' view with source Players")
 	}
-	if rule.Views["playerCount"] == nil || rule.Views["playerCount"].Type != ast.ViewTypeCount {
-		t.Error("expected 'playerCount' view with type Count")
+	if rule.Views["highScorers"] == nil || len(rule.Views["highScorers"].Pipeline) != 1 {
+		t.Error("expected 'highScorers' view with 1 pipeline operation")
 	}
-	if rule.Views["maxHealth"] == nil || rule.Views["maxHealth"].Type != ast.ViewTypeMax {
-		t.Error("expected 'maxHealth' view with type Max")
+	if rule.Views["topScorer"] == nil || len(rule.Views["topScorer"].Pipeline) != 2 {
+		t.Error("expected 'topScorer' view with 2 pipeline operations")
 	}
 }
 
@@ -345,8 +306,6 @@ func TestParser_MissingRequiredFields(t *testing.T) {
 		t.Error("expected error for missing name")
 	}
 }
-
-// Additional edge case tests
 
 func TestParser_RuleSetWithName_NotConfusedWithSingleRule(t *testing.T) {
 	// RuleSet with "name" field should not be confused with single Rule
@@ -434,19 +393,22 @@ func TestParser_RuleWithConditionTrigger(t *testing.T) {
 	}
 }
 
-func TestParser_RuleWithTransform(t *testing.T) {
+func TestParser_RuleWithSetFromView(t *testing.T) {
 	input := []byte(`{
-		"name": "TransformRule",
+		"name": "SetFromViewRule",
 		"trigger": {"type": "OnTick"},
+		"views": {
+			"allPlayers": {"source": "Players"}
+		},
 		"effects": [
 			{
-				"type": "Transform",
-				"path": "$.Position",
-				"transform": {
-					"type": "MoveTowards",
-					"current": "$.Position",
-					"target": "$.Target",
-					"speed": 10
+				"type": "SetFromView",
+				"targets": "allPlayers",
+				"path": "$.Distance",
+				"valueExpression": {
+					"type": "distance",
+					"from": "self.position",
+					"to": "view:nearestEnemy"
 				}
 			}
 		]
@@ -459,30 +421,26 @@ func TestParser_RuleWithTransform(t *testing.T) {
 	}
 
 	effect := ruleSet.Rules[0].Effects[0]
-	if effect.Type != ast.EffectTypeTransform {
-		t.Errorf("expected Transform effect type, got %s", effect.Type)
+	if effect.Type != ast.EffectTypeSetFromView {
+		t.Errorf("expected SetFromView effect type, got %s", effect.Type)
 	}
-	if effect.Transform == nil {
-		t.Fatal("expected transform to be set")
-	}
-	if effect.Transform.Type != ast.TransformTypeMoveTowards {
-		t.Errorf("expected MoveTowards transform type, got %s", effect.Transform.Type)
+	if effect.ValueExpression == nil {
+		t.Fatal("expected valueExpression to be set")
 	}
 }
 
-func TestParser_RuleWithNestedViews(t *testing.T) {
+func TestParser_RuleWithViewPipeline(t *testing.T) {
 	input := []byte(`{
-		"name": "NestedViewRule",
+		"name": "PipelineRule",
 		"trigger": {"type": "OnTick"},
-		"selector": {"type": "All", "entity": "Players"},
 		"views": {
-			"groupedScores": {
-				"type": "GroupBy",
-				"groupField": "Team",
-				"aggregate": {
-					"type": "Sum",
-					"field": "$.Score"
-				}
+			"topRunners": {
+				"source": "Players",
+				"pipeline": [
+					{"type": "Filter", "where": {"field": "Team", "op": "==", "value": "runner"}},
+					{"type": "OrderBy", "by": "Score", "order": "desc"},
+					{"type": "Limit", "count": 3}
+				]
 			}
 		},
 		"effects": []
@@ -494,18 +452,12 @@ func TestParser_RuleWithNestedViews(t *testing.T) {
 		t.Fatalf("Parse failed: %v", err)
 	}
 
-	view := ruleSet.Rules[0].Views["groupedScores"]
+	view := ruleSet.Rules[0].Views["topRunners"]
 	if view == nil {
-		t.Fatal("expected groupedScores view")
+		t.Fatal("expected topRunners view")
 	}
-	if view.Type != ast.ViewTypeGroupBy {
-		t.Errorf("expected GroupBy view type, got %s", view.Type)
-	}
-	if view.Aggregate == nil {
-		t.Fatal("expected aggregate view")
-	}
-	if view.Aggregate.Type != ast.ViewTypeSum {
-		t.Errorf("expected Sum aggregate type, got %s", view.Aggregate.Type)
+	if len(view.Pipeline) != 3 {
+		t.Errorf("expected 3 pipeline operations, got %d", len(view.Pipeline))
 	}
 }
 
@@ -603,17 +555,23 @@ func TestParser_RuleWithSequenceEffect(t *testing.T) {
 	}
 }
 
-func TestParser_ComplexWhere(t *testing.T) {
+func TestParser_ViewWithWhereClause(t *testing.T) {
 	input := []byte(`{
-		"name": "ComplexWhereRule",
+		"name": "FilterRule",
 		"trigger": {"type": "OnTick"},
-		"selector": {
-			"type": "Filter",
-			"entity": "Players",
-			"where": {
-				"field": "Score",
-				"op": ">=",
-				"value": 100
+		"views": {
+			"highScorers": {
+				"source": "Players",
+				"pipeline": [
+					{
+						"type": "Filter",
+						"where": {
+							"field": "Score",
+							"op": ">=",
+							"value": 100
+						}
+					}
+				]
 			}
 		},
 		"effects": []
@@ -625,15 +583,20 @@ func TestParser_ComplexWhere(t *testing.T) {
 		t.Fatalf("Parse failed: %v", err)
 	}
 
-	selector := ruleSet.Rules[0].Selector
-	if selector.Where == nil {
+	view := ruleSet.Rules[0].Views["highScorers"]
+	if view == nil || len(view.Pipeline) != 1 {
+		t.Fatal("expected view with 1 pipeline operation")
+	}
+
+	op := view.Pipeline[0]
+	if op.Where == nil {
 		t.Fatal("expected Where clause")
 	}
-	if selector.Where.Field != "Score" {
-		t.Errorf("expected field 'Score', got '%s'", selector.Where.Field)
+	if op.Where.Field != "Score" {
+		t.Errorf("expected field 'Score', got '%s'", op.Where.Field)
 	}
-	if selector.Where.Op != ">=" {
-		t.Errorf("expected op '>=', got '%s'", selector.Where.Op)
+	if op.Where.Op != ">=" {
+		t.Errorf("expected op '>=', got '%s'", op.Where.Op)
 	}
 }
 
@@ -698,29 +661,15 @@ func TestParseTrigger_Function(t *testing.T) {
 	}
 }
 
-func TestParseSelector_Function(t *testing.T) {
-	data := map[string]interface{}{
-		"type":   "Filter",
-		"entity": "Players",
-	}
-
-	selector, err := ParseSelector(data)
-	if err != nil {
-		t.Fatalf("ParseSelector failed: %v", err)
-	}
-
-	if selector.Type != ast.SelectorTypeFilter {
-		t.Errorf("expected type Filter, got %s", selector.Type)
-	}
-	if selector.Entity != "Players" {
-		t.Errorf("expected entity 'Players', got %s", selector.Entity)
-	}
-}
-
 func TestParseView_Function(t *testing.T) {
 	data := map[string]interface{}{
-		"type":  "Sum",
-		"field": "$.Score",
+		"source": "Players",
+		"pipeline": []interface{}{
+			map[string]interface{}{
+				"type":  "Filter",
+				"where": map[string]interface{}{"field": "Score", "op": ">=", "value": float64(100)},
+			},
+		},
 	}
 
 	view, err := ParseView(data)
@@ -728,8 +677,8 @@ func TestParseView_Function(t *testing.T) {
 		t.Fatalf("ParseView failed: %v", err)
 	}
 
-	if view.Type != ast.ViewTypeSum {
-		t.Errorf("expected type Sum, got %s", view.Type)
+	if view.Source != "Players" {
+		t.Errorf("expected source 'Players', got %s", view.Source)
 	}
 }
 
@@ -766,5 +715,34 @@ func TestParseTransform_Function(t *testing.T) {
 
 	if transform.Type != ast.TransformTypeAdd {
 		t.Errorf("expected type Add, got %s", transform.Type)
+	}
+}
+
+func TestParser_EffectWithTargets(t *testing.T) {
+	input := []byte(`{
+		"name": "BatchEffectRule",
+		"trigger": {"type": "OnTick"},
+		"views": {
+			"allPlayers": {"source": "Players"}
+		},
+		"effects": [
+			{
+				"type": "Increment",
+				"targets": "allPlayers",
+				"path": "$.Score",
+				"value": 10
+			}
+		]
+	}`)
+
+	parser := NewParser()
+	ruleSet, err := parser.Parse(input, "test.json")
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	effect := ruleSet.Rules[0].Effects[0]
+	if effect.Targets != "allPlayers" {
+		t.Errorf("expected targets 'allPlayers', got '%v'", effect.Targets)
 	}
 }

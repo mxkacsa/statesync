@@ -11,6 +11,25 @@ import (
 	"github.com/mxkacsa/statesync/cmd/logicgen/ast"
 )
 
+// DebugHandler handles debug logging for rule evaluation
+type DebugHandler interface {
+	// OnMissingField is called when a field access fails during filtering
+	OnMissingField(entityType string, fieldName string, err error)
+	// OnFilterMatch logs filter match/no-match for debugging
+	OnFilterMatch(entityType string, field string, op string, expected, actual interface{}, matched bool)
+}
+
+// DefaultDebugHandler logs to stdout
+type DefaultDebugHandler struct{}
+
+func (d *DefaultDebugHandler) OnMissingField(entityType, fieldName string, err error) {
+	fmt.Printf("[DEBUG] Missing field '%s' on %s: %v\n", fieldName, entityType, err)
+}
+
+func (d *DefaultDebugHandler) OnFilterMatch(entityType, field, op string, expected, actual interface{}, matched bool) {
+	fmt.Printf("[DEBUG] Filter %s.%s %s %v (actual: %v) = %v\n", entityType, field, op, expected, actual, matched)
+}
+
 // Context provides runtime context for rule evaluation
 type Context struct {
 	// State is the current game state (must be a pointer to struct)
@@ -40,6 +59,18 @@ type Context struct {
 	// SelectedEntities contains entities selected by the selector
 	SelectedEntities []interface{}
 
+	// SenderID is the player ID who triggered the event (empty = server/rule)
+	SenderID string
+
+	// PermissionChecker validates write permissions (nil = no restrictions)
+	PermissionChecker *PermissionChecker
+
+	// Debug enables debug logging (for development)
+	Debug bool
+
+	// DebugHandler handles debug output (nil uses DefaultDebugHandler if Debug is true)
+	DebugHandler DebugHandler
+
 	// stateValue is cached reflection value of state
 	stateValue reflect.Value
 }
@@ -55,17 +86,70 @@ func NewContext(state interface{}, dt time.Duration, tick uint64) *Context {
 	}
 }
 
+// WithDebug returns a new context with debug logging enabled
+func (c *Context) WithDebug(handler DebugHandler) *Context {
+	newCtx := *c
+	newCtx.Debug = true
+	newCtx.DebugHandler = handler
+	if handler == nil {
+		newCtx.DebugHandler = &DefaultDebugHandler{}
+	}
+	return &newCtx
+}
+
+// getDebugHandler returns the debug handler if debug is enabled
+func (c *Context) getDebugHandler() DebugHandler {
+	if !c.Debug {
+		return nil
+	}
+	if c.DebugHandler == nil {
+		return &DefaultDebugHandler{}
+	}
+	return c.DebugHandler
+}
+
+// WithPermissions returns a new context with permission checking enabled
+func (c *Context) WithPermissions(schema *PermissionSchema) *Context {
+	newCtx := *c
+	newCtx.PermissionChecker = NewPermissionChecker(schema)
+	if c.SenderID != "" {
+		newCtx.PermissionChecker = newCtx.PermissionChecker.WithSender(c.SenderID)
+	}
+	return &newCtx
+}
+
+// WithSender returns a new context with the given sender ID
+func (c *Context) WithSender(senderID string) *Context {
+	newCtx := *c
+	newCtx.SenderID = senderID
+	if c.PermissionChecker != nil {
+		newCtx.PermissionChecker = c.PermissionChecker.WithSender(senderID)
+	}
+	return &newCtx
+}
+
 // WithEvent returns a new context with the given event
 func (c *Context) WithEvent(event *ast.Event) *Context {
 	newCtx := *c
 	newCtx.Event = event
-	if event != nil && event.Params != nil {
-		newCtx.Params = make(map[string]interface{})
-		for k, v := range c.Params {
-			newCtx.Params[k] = v
+	if event != nil {
+		// Set sender from event
+		newCtx.SenderID = event.Sender
+
+		// Update permission checker with sender
+		if c.PermissionChecker != nil {
+			newCtx.PermissionChecker = c.PermissionChecker.WithSender(event.Sender)
 		}
-		for k, v := range event.Params {
-			newCtx.Params[k] = v
+
+		// Merge event params
+		if event.Params != nil {
+			newCtx.Params = make(map[string]interface{})
+			for k, v := range c.Params {
+				newCtx.Params[k] = v
+			}
+			for k, v := range event.Params {
+				newCtx.Params[k] = v
+			}
 		}
 	}
 	return &newCtx
@@ -128,6 +212,21 @@ func (c *Context) Resolve(v interface{}) (interface{}, error) {
 func (c *Context) resolveString(s string) (interface{}, error) {
 	if len(s) == 0 {
 		return s, nil
+	}
+
+	// Self reference: self.field (resolved to current entity's field)
+	if strings.HasPrefix(s, "self.") {
+		if c.CurrentEntity == nil {
+			return nil, fmt.Errorf("self reference outside entity context: %s", s)
+		}
+		fieldPath := s[5:] // Remove "self." prefix
+		return getField(c.CurrentEntity, fieldPath)
+	}
+	if s == "self" {
+		if c.CurrentEntity == nil {
+			return nil, fmt.Errorf("self reference outside entity context")
+		}
+		return c.CurrentEntity, nil
 	}
 
 	// State path: $.Field or state:$.Field
@@ -247,8 +346,22 @@ func (c *Context) SetPath(path ast.Path, value interface{}) error {
 		}
 	}
 
-	// Set the final field
+	// Check permissions before setting
 	lastSeg := segments[len(segments)-1]
+	if c.PermissionChecker != nil {
+		fieldName := lastSeg.field
+		if fieldName == "" && lastSeg.index != nil {
+			// For array/map access, we need the parent entity
+			// Permission is checked on the entity being modified
+		}
+		if fieldName != "" {
+			if err := c.PermissionChecker.CanWrite(current, fieldName); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Set the final field
 	return c.setField(current, lastSeg, value)
 }
 

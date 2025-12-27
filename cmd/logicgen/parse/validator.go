@@ -31,13 +31,6 @@ func (v *RequiredFieldsValidator) Validate(ruleSet *ast.RuleSet) error {
 			}
 		}
 
-		// Validate selector if present
-		if rule.Selector != nil {
-			if rule.Selector.Type == "" && rule.Selector.Entity == "" {
-				errors = append(errors, fmt.Sprintf("rule[%d].selector: type or entity is required", i))
-			}
-		}
-
 		// Validate effects
 		for j, effect := range rule.Effects {
 			if effect.Type == "" {
@@ -69,11 +62,18 @@ func (v *PathValidator) Validate(ruleSet *ast.RuleSet) error {
 			}
 		}
 
-		// Validate view paths
+		// Validate view pipeline paths
 		for name, view := range rule.Views {
-			if view.Field != "" {
-				if err := validatePath(string(view.Field)); err != nil {
-					errors = append(errors, fmt.Sprintf("rule[%d].views.%s.field: %s", i, name, err))
+			for k, op := range view.Pipeline {
+				if op.Field != "" {
+					if err := validatePath(string(op.Field)); err != nil {
+						errors = append(errors, fmt.Sprintf("rule[%d].views.%s.pipeline[%d].field: %s", i, name, k, err))
+					}
+				}
+				if op.By != "" {
+					if err := validatePath(string(op.By)); err != nil {
+						errors = append(errors, fmt.Sprintf("rule[%d].views.%s.pipeline[%d].by: %s", i, name, k, err))
+					}
 				}
 			}
 		}
@@ -91,12 +91,15 @@ func validatePath(path string) error {
 		return nil
 	}
 
-	// Path must start with $ or be a reference
+	// Path must start with $ or be a reference or self, or be a simple field name
 	if !strings.HasPrefix(path, "$") &&
 		!strings.HasPrefix(path, "param:") &&
 		!strings.HasPrefix(path, "view:") &&
 		!strings.HasPrefix(path, "const:") &&
-		!strings.HasPrefix(path, "state:") {
+		!strings.HasPrefix(path, "state:") &&
+		!strings.HasPrefix(path, "self.") &&
+		path != "self" &&
+		!isSimpleFieldName(path) {
 		return fmt.Errorf("invalid path format: %s", path)
 	}
 
@@ -117,6 +120,20 @@ func validatePath(path string) error {
 	}
 
 	return nil
+}
+
+// isSimpleFieldName checks if a path is a simple field name (letters, digits, underscore)
+func isSimpleFieldName(path string) bool {
+	if len(path) == 0 {
+		return false
+	}
+	for _, ch := range path {
+		if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+			(ch >= '0' && ch <= '9') || ch == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 // TriggerValidator validates trigger configurations
@@ -145,8 +162,8 @@ func (v *TriggerValidator) Validate(ruleSet *ast.RuleSet) error {
 			if trigger.From == "" || trigger.To == "" {
 				errors = append(errors, fmt.Sprintf("rule[%d].trigger: Distance requires from and to paths", i))
 			}
-			if trigger.Value <= 0 {
-				errors = append(errors, fmt.Sprintf("rule[%d].trigger: Distance requires positive value", i))
+			if trigger.Value < 0 {
+				errors = append(errors, fmt.Sprintf("rule[%d].trigger: Distance value cannot be negative", i))
 			}
 		case ast.TriggerTypeTimer:
 			if trigger.Duration <= 0 {
@@ -157,44 +174,6 @@ func (v *TriggerValidator) Validate(ruleSet *ast.RuleSet) error {
 
 	if len(errors) > 0 {
 		return fmt.Errorf("trigger validation failed:\n  - %s", strings.Join(errors, "\n  - "))
-	}
-	return nil
-}
-
-// SelectorValidator validates selector configurations
-type SelectorValidator struct{}
-
-// Validate validates selector configurations
-func (v *SelectorValidator) Validate(ruleSet *ast.RuleSet) error {
-	var errors []string
-
-	for i, rule := range ruleSet.Rules {
-		if rule.Selector == nil {
-			continue
-		}
-
-		selector := rule.Selector
-		switch selector.Type {
-		case ast.SelectorTypeSingle:
-			if selector.ID == "" {
-				errors = append(errors, fmt.Sprintf("rule[%d].selector: Single requires id", i))
-			}
-		case ast.SelectorTypeRelated:
-			if selector.From == "" {
-				errors = append(errors, fmt.Sprintf("rule[%d].selector: Related requires from", i))
-			}
-			if selector.Relation == "" {
-				errors = append(errors, fmt.Sprintf("rule[%d].selector: Related requires relation", i))
-			}
-		case ast.SelectorTypeNearest, ast.SelectorTypeFarthest:
-			if selector.Origin == "" {
-				errors = append(errors, fmt.Sprintf("rule[%d].selector: Nearest/Farthest requires origin", i))
-			}
-		}
-	}
-
-	if len(errors) > 0 {
-		return fmt.Errorf("selector validation failed:\n  - %s", strings.Join(errors, "\n  - "))
 	}
 	return nil
 }
@@ -220,12 +199,12 @@ func (v *EffectValidator) Validate(ruleSet *ast.RuleSet) error {
 				if effect.Path == "" {
 					errors = append(errors, fmt.Sprintf("rule[%d].effects[%d]: Increment/Decrement requires path", i, j))
 				}
-			case ast.EffectTypeAppend:
+			case ast.EffectTypeSetFromView:
 				if effect.Path == "" {
-					errors = append(errors, fmt.Sprintf("rule[%d].effects[%d]: Append requires path", i, j))
+					errors = append(errors, fmt.Sprintf("rule[%d].effects[%d]: SetFromView requires path", i, j))
 				}
-				if effect.Item == nil {
-					errors = append(errors, fmt.Sprintf("rule[%d].effects[%d]: Append requires item", i, j))
+				if effect.ValueExpression == nil {
+					errors = append(errors, fmt.Sprintf("rule[%d].effects[%d]: SetFromView requires valueExpression", i, j))
 				}
 			case ast.EffectTypeEmit:
 				if effect.Event == "" {
@@ -234,13 +213,6 @@ func (v *EffectValidator) Validate(ruleSet *ast.RuleSet) error {
 			case ast.EffectTypeSpawn:
 				if effect.Entity == "" {
 					errors = append(errors, fmt.Sprintf("rule[%d].effects[%d]: Spawn requires entity", i, j))
-				}
-			case ast.EffectTypeTransform:
-				if effect.Path == "" {
-					errors = append(errors, fmt.Sprintf("rule[%d].effects[%d]: Transform requires path", i, j))
-				}
-				if effect.Transform == nil {
-					errors = append(errors, fmt.Sprintf("rule[%d].effects[%d]: Transform requires transform", i, j))
 				}
 			}
 		}
@@ -261,26 +233,36 @@ func (v *ViewValidator) Validate(ruleSet *ast.RuleSet) error {
 
 	for i, rule := range ruleSet.Rules {
 		for name, view := range rule.Views {
-			if view.Type == "" {
-				errors = append(errors, fmt.Sprintf("rule[%d].views.%s: type is required", i, name))
+			if view.Source == "" {
+				errors = append(errors, fmt.Sprintf("rule[%d].views.%s: source is required", i, name))
 			}
 
-			switch view.Type {
-			case ast.ViewTypeField, ast.ViewTypeMax, ast.ViewTypeMin, ast.ViewTypeSum, ast.ViewTypeAvg, ast.ViewTypeDistinct:
-				if view.Field == "" {
-					errors = append(errors, fmt.Sprintf("rule[%d].views.%s: field is required for %s", i, name, view.Type))
-				}
-			case ast.ViewTypeGroupBy:
-				if view.GroupField == "" {
-					errors = append(errors, fmt.Sprintf("rule[%d].views.%s: groupField is required for GroupBy", i, name))
-				}
-			case ast.ViewTypeSort:
-				if view.By == "" {
-					errors = append(errors, fmt.Sprintf("rule[%d].views.%s: by is required for Sort", i, name))
-				}
-			case ast.ViewTypeDistance:
-				if view.From == "" || view.To == "" {
-					errors = append(errors, fmt.Sprintf("rule[%d].views.%s: from and to are required for Distance", i, name))
+			// Validate pipeline operations
+			for k, op := range view.Pipeline {
+				switch op.Type {
+				case ast.ViewOpFilter:
+					if op.Where == nil {
+						errors = append(errors, fmt.Sprintf("rule[%d].views.%s.pipeline[%d]: Filter requires where clause", i, name, k))
+					}
+				case ast.ViewOpOrderBy:
+					if op.By == "" {
+						errors = append(errors, fmt.Sprintf("rule[%d].views.%s.pipeline[%d]: OrderBy requires by field", i, name, k))
+					}
+				case ast.ViewOpGroupBy:
+					if op.GroupField == "" {
+						errors = append(errors, fmt.Sprintf("rule[%d].views.%s.pipeline[%d]: GroupBy requires groupField", i, name, k))
+					}
+				case ast.ViewOpMin, ast.ViewOpMax, ast.ViewOpSum, ast.ViewOpAvg:
+					if op.Field == "" {
+						errors = append(errors, fmt.Sprintf("rule[%d].views.%s.pipeline[%d]: %s requires field", i, name, k, op.Type))
+					}
+				case ast.ViewOpNearest, ast.ViewOpFarthest:
+					if op.Origin == nil {
+						errors = append(errors, fmt.Sprintf("rule[%d].views.%s.pipeline[%d]: %s requires origin", i, name, k, op.Type))
+					}
+					if op.Position == "" {
+						errors = append(errors, fmt.Sprintf("rule[%d].views.%s.pipeline[%d]: %s requires position field", i, name, k, op.Type))
+					}
 				}
 			}
 		}
@@ -301,9 +283,18 @@ func (v *TransformValidator) Validate(ruleSet *ast.RuleSet) error {
 
 	for i, rule := range ruleSet.Rules {
 		for j, effect := range rule.Effects {
-			if effect.Transform != nil {
-				if err := validateTransform(effect.Transform); err != nil {
-					errors = append(errors, fmt.Sprintf("rule[%d].effects[%d].transform: %s", i, j, err))
+			// Check transform in Value field
+			if effect.Value != nil {
+				if transform, ok := effect.Value.(*ast.Transform); ok {
+					if err := validateTransform(transform); err != nil {
+						errors = append(errors, fmt.Sprintf("rule[%d].effects[%d].value: %s", i, j, err))
+					}
+				}
+			}
+			// Check transform in ValueExpression field
+			if effect.ValueExpression != nil && effect.ValueExpression.Transform != nil {
+				if err := validateTransform(effect.ValueExpression.Transform); err != nil {
+					errors = append(errors, fmt.Sprintf("rule[%d].effects[%d].valueExpression.transform: %s", i, j, err))
 				}
 			}
 		}
@@ -341,6 +332,63 @@ func validateTransform(t *ast.Transform) error {
 	return nil
 }
 
+// ValueExpressionValidator validates view parameter usage in effects
+type ValueExpressionValidator struct{}
+
+// Validate validates that effects provide required view parameters
+func (v *ValueExpressionValidator) Validate(ruleSet *ast.RuleSet) error {
+	var errors []string
+
+	for i, rule := range ruleSet.Rules {
+		// Build map of views with their required params
+		viewRequiredParams := make(map[string][]string)
+		for name, view := range rule.Views {
+			for paramName, paramDef := range view.Params {
+				if paramDef.Default == nil {
+					viewRequiredParams[name] = append(viewRequiredParams[name], paramName)
+				}
+			}
+		}
+
+		// Check effects that use ValueExpression with views
+		for j, effect := range rule.Effects {
+			if effect.ValueExpression == nil {
+				continue
+			}
+			if effect.ValueExpression.View == "" {
+				continue
+			}
+
+			viewName := effect.ValueExpression.View
+			requiredParams, exists := viewRequiredParams[viewName]
+			if !exists {
+				// View not found in this rule - might be external
+				continue
+			}
+
+			// Check that all required params are provided
+			for _, requiredParam := range requiredParams {
+				if effect.ValueExpression.ViewParams == nil {
+					errors = append(errors, fmt.Sprintf(
+						"rule[%d].effects[%d]: view %q requires parameter %q but no viewParams provided",
+						i, j, viewName, requiredParam))
+					continue
+				}
+				if _, provided := effect.ValueExpression.ViewParams[requiredParam]; !provided {
+					errors = append(errors, fmt.Sprintf(
+						"rule[%d].effects[%d]: view %q requires parameter %q",
+						i, j, viewName, requiredParam))
+				}
+			}
+		}
+	}
+
+	if len(errors) > 0 {
+		return fmt.Errorf("value expression validation failed:\n  - %s", strings.Join(errors, "\n  - "))
+	}
+	return nil
+}
+
 // CompositeValidator combines multiple validators
 type CompositeValidator struct {
 	validators []Validator
@@ -371,9 +419,9 @@ func StrictValidator() Validator {
 		&RequiredFieldsValidator{},
 		&PathValidator{},
 		&TriggerValidator{},
-		&SelectorValidator{},
 		&EffectValidator{},
 		&ViewValidator{},
 		&TransformValidator{},
+		&ValueExpressionValidator{},
 	)
 }

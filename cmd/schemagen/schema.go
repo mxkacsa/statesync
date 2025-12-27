@@ -22,6 +22,7 @@ type TypeDef struct {
 	Fields       []*FieldDef `json:"fields"`
 	Role         SchemaRole  `json:"role,omitempty"`         // helper or root (default: helper)
 	DefaultState string      `json:"defaultState,omitempty"` // For root: "active" or "inactive" (default: inactive)
+	OwnerField   string      `json:"ownerField,omitempty"`   // Field that holds the owner player ID (for @write(owner) checks)
 }
 
 // IsRoot returns true if this is an activatable root schema
@@ -51,16 +52,26 @@ const (
 	AutoGenUUID AutoGenType = "uuid" // Generate UUID v4
 )
 
+// WritePermission specifies who can modify a field
+type WritePermission string
+
+const (
+	WriteAnyone WritePermission = ""       // Anyone can write (default)
+	WriteServer WritePermission = "server" // Only server/rules can write, no player
+	WriteOwner  WritePermission = "owner"  // Only the entity owner can write
+)
+
 // FieldDef represents a field definition
 type FieldDef struct {
-	Name          string        `json:"name"`
-	Type          string        `json:"type"`                    // int32, string, uuid, []Player, map[string]int, etc.
-	Key           string        `json:"key,omitempty"`           // For arrays: key field for tracking
-	Views         []string      `json:"views,omitempty"`         // Which views can see this field
-	Optional      bool          `json:"optional,omitempty"`      // Pointer/nullable
-	DefaultSource DefaultSource `json:"defaultSource,omitempty"` // Where default comes from
-	DefaultValue  string        `json:"defaultValue,omitempty"`  // Literal value or config path (e.g., "GameConfig.Speed")
-	AutoGen       AutoGenType   `json:"autoGen,omitempty"`       // Auto-generation type (e.g., "uuid")
+	Name          string          `json:"name"`
+	Type          string          `json:"type"`                    // int32, string, uuid, []Player, map[string]int, etc.
+	Key           string          `json:"key,omitempty"`           // For arrays: key field for tracking
+	Views         []string        `json:"views,omitempty"`         // Which views can see this field
+	Write         WritePermission `json:"write,omitempty"`         // Who can modify this field (server, owner, or anyone)
+	Optional      bool            `json:"optional,omitempty"`      // Pointer/nullable
+	DefaultSource DefaultSource   `json:"defaultSource,omitempty"` // Where default comes from
+	DefaultValue  string          `json:"defaultValue,omitempty"`  // Literal value or config path (e.g., "GameConfig.Speed")
+	AutoGen       AutoGenType     `json:"autoGen,omitempty"`       // Auto-generation type (e.g., "uuid")
 }
 
 // ViewDef represents a view/projection definition

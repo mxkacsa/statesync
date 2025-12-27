@@ -7,7 +7,7 @@ import (
 )
 
 // Path represents a path expression to access state values.
-// Examples: "$.Players[0].Score", "param:playerID", "view:maxScore"
+// Examples: "$.Players[0].Score", "param:playerID", "view:maxScore", "self.position"
 type Path string
 
 // PathType indicates what kind of path this is
@@ -18,7 +18,8 @@ const (
 	PathTypeParam   PathType = "param"   // param:name
 	PathTypeView    PathType = "view"    // view:name
 	PathTypeConst   PathType = "const"   // const:value
-	PathTypeCurrent PathType = "current" // $ (current entity in selector context)
+	PathTypeSelf    PathType = "self"    // self.field (entity context, resolved at runtime)
+	PathTypeCurrent PathType = "current" // $ (current entity in selector context) - deprecated
 )
 
 // ParsedPath represents a parsed path expression
@@ -66,13 +67,6 @@ const (
 	OpIn           = "in"
 )
 
-// WhereClause represents a filter condition
-type WhereClause struct {
-	Field string      `json:"field"`
-	Op    string      `json:"op"`
-	Value interface{} `json:"value"`
-}
-
 // UnmarshalJSON implements custom JSON unmarshaling for Expression
 func (e *Expression) UnmarshalJSON(data []byte) error {
 	// Try as object first
@@ -104,4 +98,10 @@ type Event struct {
 	Name   string                 `json:"name"`
 	Params map[string]interface{} `json:"params,omitempty"`
 	Sender string                 `json:"sender,omitempty"`
+}
+
+// Vec2 represents a 2D vector (for positions)
+type Vec2 struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
 }
