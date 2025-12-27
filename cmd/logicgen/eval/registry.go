@@ -326,3 +326,162 @@ func ListTransforms() []*TransformDefinition {
 func ListTransformsByCategory(category string) []*TransformDefinition {
 	return globalTransforms.ListByCategory(category)
 }
+
+// =============================================================================
+// Editor API - JSON-serializable types for the visual editor
+// =============================================================================
+
+// PortSchema is a JSON-serializable port definition
+type PortSchema struct {
+	Name        string      `json:"name"`
+	Type        string      `json:"type"`
+	Required    bool        `json:"required,omitempty"`
+	Default     interface{} `json:"default,omitempty"`
+	Description string      `json:"description,omitempty"`
+}
+
+// ViewOpSchema is a JSON-serializable view operation definition
+type ViewOpSchema struct {
+	Name        string       `json:"name"`
+	Category    string       `json:"category"`
+	Description string       `json:"description,omitempty"`
+	Inputs      []PortSchema `json:"inputs"`
+	Outputs     []PortSchema `json:"outputs"`
+}
+
+// EffectSchema is a JSON-serializable effect definition
+type EffectSchema struct {
+	Name        string       `json:"name"`
+	Category    string       `json:"category"`
+	Description string       `json:"description,omitempty"`
+	Inputs      []PortSchema `json:"inputs"`
+}
+
+// TransformSchema is a JSON-serializable transform definition
+type TransformSchema struct {
+	Name        string       `json:"name"`
+	Category    string       `json:"category"`
+	Description string       `json:"description,omitempty"`
+	Inputs      []PortSchema `json:"inputs"`
+	Outputs     []PortSchema `json:"outputs"`
+}
+
+// EvalEditorSchema is the complete schema for eval operations in the visual editor
+type EvalEditorSchema struct {
+	Version    string            `json:"version"`
+	ViewOps    []ViewOpSchema    `json:"viewOps"`
+	Effects    []EffectSchema    `json:"effects"`
+	Transforms []TransformSchema `json:"transforms"`
+}
+
+// ToSchema converts a ViewOpDefinition to a JSON-serializable ViewOpSchema
+func (def *ViewOpDefinition) ToSchema() ViewOpSchema {
+	inputs := make([]PortSchema, len(def.Inputs))
+	for i, p := range def.Inputs {
+		inputs[i] = PortSchema{
+			Name:        p.Name,
+			Type:        p.Type,
+			Required:    p.Required,
+			Default:     p.Default,
+			Description: p.Description,
+		}
+	}
+
+	outputs := make([]PortSchema, len(def.Outputs))
+	for i, p := range def.Outputs {
+		outputs[i] = PortSchema{
+			Name:        p.Name,
+			Type:        p.Type,
+			Description: p.Description,
+		}
+	}
+
+	return ViewOpSchema{
+		Name:        def.Name,
+		Category:    def.Category,
+		Description: def.Description,
+		Inputs:      inputs,
+		Outputs:     outputs,
+	}
+}
+
+// ToSchema converts an EffectDefinition to a JSON-serializable EffectSchema
+func (def *EffectDefinition) ToSchema() EffectSchema {
+	inputs := make([]PortSchema, len(def.Inputs))
+	for i, p := range def.Inputs {
+		inputs[i] = PortSchema{
+			Name:        p.Name,
+			Type:        p.Type,
+			Required:    p.Required,
+			Default:     p.Default,
+			Description: p.Description,
+		}
+	}
+
+	return EffectSchema{
+		Name:        def.Name,
+		Category:    def.Category,
+		Description: def.Description,
+		Inputs:      inputs,
+	}
+}
+
+// ToSchema converts a TransformDefinition to a JSON-serializable TransformSchema
+func (def *TransformDefinition) ToSchema() TransformSchema {
+	inputs := make([]PortSchema, len(def.Inputs))
+	for i, p := range def.Inputs {
+		inputs[i] = PortSchema{
+			Name:        p.Name,
+			Type:        p.Type,
+			Required:    p.Required,
+			Default:     p.Default,
+			Description: p.Description,
+		}
+	}
+
+	outputs := make([]PortSchema, len(def.Outputs))
+	for i, p := range def.Outputs {
+		outputs[i] = PortSchema{
+			Name:        p.Name,
+			Type:        p.Type,
+			Description: p.Description,
+		}
+	}
+
+	return TransformSchema{
+		Name:        def.Name,
+		Category:    def.Category,
+		Description: def.Description,
+		Inputs:      inputs,
+		Outputs:     outputs,
+	}
+}
+
+// GetEvalEditorSchema returns the complete eval schema for the visual editor
+func GetEvalEditorSchema() EvalEditorSchema {
+	viewOps := ListViewOps()
+	effects := ListEffects()
+	transforms := ListTransforms()
+
+	viewOpSchemas := make([]ViewOpSchema, len(viewOps))
+	for i, op := range viewOps {
+		viewOpSchemas[i] = op.ToSchema()
+	}
+
+	effectSchemas := make([]EffectSchema, len(effects))
+	for i, e := range effects {
+		effectSchemas[i] = e.ToSchema()
+	}
+
+	transformSchemas := make([]TransformSchema, len(transforms))
+	for i, t := range transforms {
+		transformSchemas[i] = t.ToSchema()
+	}
+
+	return EvalEditorSchema{
+		Version:    "1.0",
+		ViewOps:    viewOpSchemas,
+		Effects:    effectSchemas,
+		Transforms: transformSchemas,
+	}
+}

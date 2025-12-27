@@ -152,3 +152,122 @@ const (
 	CategoryLogic  = "logic"
 	CategoryArray  = "array"
 )
+
+// =============================================================================
+// Editor API - JSON-serializable types for the visual editor
+// =============================================================================
+
+// PortSchema is a JSON-serializable port definition
+type PortSchema struct {
+	Name        string      `json:"name"`
+	Type        string      `json:"type"`
+	Required    bool        `json:"required,omitempty"`
+	Default     interface{} `json:"default,omitempty"`
+	Description string      `json:"description,omitempty"`
+}
+
+// NodeSchema is a JSON-serializable node definition for the editor
+type NodeSchema struct {
+	Name        string       `json:"name"`
+	Category    string       `json:"category"`
+	Description string       `json:"description,omitempty"`
+	Inputs      []PortSchema `json:"inputs"`
+	Outputs     []PortSchema `json:"outputs"`
+}
+
+// CategorySchema groups nodes by category
+type CategorySchema struct {
+	Name  string       `json:"name"`
+	Nodes []NodeSchema `json:"nodes"`
+}
+
+// EditorSchema is the complete schema for the visual editor
+type EditorSchema struct {
+	Version    string           `json:"version"`
+	Categories []CategorySchema `json:"categories"`
+}
+
+// ToSchema converts a NodeDefinition to a JSON-serializable NodeSchema
+func (def *NodeDefinition) ToSchema() NodeSchema {
+	inputs := make([]PortSchema, len(def.Inputs))
+	for i, p := range def.Inputs {
+		inputs[i] = PortSchema{
+			Name:        p.Name,
+			Type:        p.Type,
+			Required:    p.Required,
+			Default:     p.Default,
+			Description: p.Description,
+		}
+	}
+
+	outputs := make([]PortSchema, len(def.Outputs))
+	for i, p := range def.Outputs {
+		outputs[i] = PortSchema{
+			Name:        p.Name,
+			Type:        p.Type,
+			Description: p.Description,
+		}
+	}
+
+	return NodeSchema{
+		Name:        def.Name,
+		Category:    def.Category,
+		Description: def.Description,
+		Inputs:      inputs,
+		Outputs:     outputs,
+	}
+}
+
+// Categories returns all unique categories in the registry
+func (r *Registry) Categories() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	seen := make(map[string]bool)
+	var categories []string
+	for _, def := range r.nodes {
+		if !seen[def.Category] {
+			seen[def.Category] = true
+			categories = append(categories, def.Category)
+		}
+	}
+	return categories
+}
+
+// GetEditorSchema returns the complete schema for the visual editor
+func (r *Registry) GetEditorSchema() EditorSchema {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	// Group nodes by category
+	categoryMap := make(map[string][]NodeSchema)
+	for _, def := range r.nodes {
+		categoryMap[def.Category] = append(categoryMap[def.Category], def.ToSchema())
+	}
+
+	// Build category list
+	var categories []CategorySchema
+	for name, nodes := range categoryMap {
+		categories = append(categories, CategorySchema{
+			Name:  name,
+			Nodes: nodes,
+		})
+	}
+
+	return EditorSchema{
+		Version:    "1.0",
+		Categories: categories,
+	}
+}
+
+// Global registry functions for editor
+
+// Categories returns all categories from the global registry
+func Categories() []string {
+	return globalRegistry.Categories()
+}
+
+// GetEditorSchema returns the editor schema from the global registry
+func GetEditorSchema() EditorSchema {
+	return globalRegistry.GetEditorSchema()
+}
