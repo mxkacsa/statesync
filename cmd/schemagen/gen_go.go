@@ -329,7 +329,7 @@ func (t *{{$t.Name}}) {{$f.Name}}() {{$goT}} {
 func (t *{{$t.Name}}) Set{{$f.Name}}(v {{$goT}}) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	{{if or (eq $f.Type "string") (isPrimitive $f.Type)}}
+	{{if and (isPrimitive $f.Type) (ne $f.Type "bytes")}}
 	if t.{{$lower}} != v {
 		t.{{$lower}} = v
 		t.changes.Mark({{$i}}, statesync.OpReplace)
@@ -419,11 +419,20 @@ func (t *{{$t.Name}}) Set{{$f.Name}}Key(key {{$pt.KeyType}}, v {{$pt.ElemType}})
 	_, existed := t.{{$lower}}[key]
 	t.{{$lower}}[key] = v
 	m := t.changes.GetOrCreateMap({{$i}})
+{{- if not (isPrimitive $pt.ElemType)}}
+	vp := v
+	if existed {
+		m.MarkReplace(key, &vp)
+	} else {
+		m.MarkAdd(key, &vp)
+	}
+{{- else}}
 	if existed {
 		m.MarkReplace(key, v)
 	} else {
 		m.MarkAdd(key, v)
 	}
+{{- end}}
 }
 
 // Delete{{$f.Name}}Key deletes a map key
@@ -450,6 +459,28 @@ func (t *{{$t.Name}}) {{$f.Name}}Get(key {{$pt.KeyType}}) ({{$pt.ElemType}}, boo
 	v, ok := t.{{$lower}}[key]
 	return v, ok
 }
+{{- if not (isPrimitive $pt.ElemType)}}
+
+// Modify{{$f.Name}}Key retrieves the value for a key, passes it to the callback for modification,
+// then writes it back and marks the change. Returns false if the key was not found.
+func (t *{{$t.Name}}) Modify{{$f.Name}}Key(key {{$pt.KeyType}}, fn func(*{{$pt.ElemType}})) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.{{$lower}} == nil {
+		return false
+	}
+	v, ok := t.{{$lower}}[key]
+	if !ok {
+		return false
+	}
+	fn(&v)
+	t.{{$lower}}[key] = v
+	m := t.changes.GetOrCreateMap({{$i}})
+	vp := v
+	m.MarkReplace(key, &vp)
+	return true
+}
+{{- end}}
 {{end}}
 {{end}}
 {{end}}

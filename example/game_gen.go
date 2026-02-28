@@ -3,6 +3,7 @@
 package main
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/mxkacsa/statesync"
@@ -21,12 +22,26 @@ type Player struct {
 	ready bool
 }
 
-// NewPlayer creates a new Player
+// NewPlayer creates a new Player with default values
 func NewPlayer() *Player {
-	return &Player{
+	t := &Player{
 		changes: statesync.NewChangeSet(),
 		schema:  PlayerSchema(),
 	}
+	t.ResetToDefaults()
+	return t
+}
+
+// ResetToDefaults resets all fields to their default values
+func (t *Player) ResetToDefaults() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.id = ""
+	t.name = ""
+	t.score = 0
+	t.hand = nil
+	t.ready = false
+	t.changes.MarkAll(4)
 }
 
 // PlayerSchema returns the schema for Player
@@ -265,6 +280,231 @@ func (t *Player) SetReady(v bool) {
 
 }
 
+// Drone is a tracked state type
+type Drone struct {
+	mu      sync.RWMutex
+	changes *statesync.ChangeSet
+	schema  *statesync.Schema
+
+	id      string
+	x       float64
+	y       float64
+	health  int32
+	ownerid string
+}
+
+// NewDrone creates a new Drone with default values
+func NewDrone() *Drone {
+	t := &Drone{
+		changes: statesync.NewChangeSet(),
+		schema:  DroneSchema(),
+	}
+	t.ResetToDefaults()
+	return t
+}
+
+// ResetToDefaults resets all fields to their default values
+func (t *Drone) ResetToDefaults() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.id = ""
+	t.x = 0
+	t.y = 0
+	t.health = 100
+	t.ownerid = ""
+	t.changes.MarkAll(4)
+}
+
+// DroneSchema returns the schema for Drone
+func DroneSchema() *statesync.Schema {
+	return statesync.NewSchemaBuilder("Drone").
+		WithID(4).String("ID").Float64("X").Float64("Y").Int32("Health").String("OwnerID").
+		Build()
+}
+
+// Trackable implementation
+
+func (t *Drone) Schema() *statesync.Schema     { return t.schema }
+func (t *Drone) Changes() *statesync.ChangeSet { return t.changes }
+func (t *Drone) ClearChanges()                 { t.changes.Clear() }
+func (t *Drone) MarkAllDirty()                 { t.changes.MarkAll(4) }
+
+func (t *Drone) GetFieldValue(index uint8) interface{} {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	switch index {
+	case 0:
+		return t.id
+	case 1:
+		return t.x
+	case 2:
+		return t.y
+	case 3:
+		return t.health
+	case 4:
+		return t.ownerid
+	}
+	return nil
+}
+
+// FastEncoder implementation - zero allocation encoding
+
+func (t *Drone) EncodeChangesTo(e *statesync.Encoder) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	// Count and write number of changes
+	changes := t.changes
+	count := 0
+	if changes.IsFieldDirty(0) {
+		count++
+	}
+	if changes.IsFieldDirty(1) {
+		count++
+	}
+	if changes.IsFieldDirty(2) {
+		count++
+	}
+	if changes.IsFieldDirty(3) {
+		count++
+	}
+	if changes.IsFieldDirty(4) {
+		count++
+	}
+	e.WriteChangeCount(count)
+
+	// Encode each changed field directly (no interface{} boxing)
+	if changes.IsFieldDirty(0) {
+		e.WriteFieldHeader(0, statesync.OpReplace)
+		e.WriteString(t.id)
+	}
+	if changes.IsFieldDirty(1) {
+		e.WriteFieldHeader(1, statesync.OpReplace)
+		e.WriteFloat64(t.x)
+	}
+	if changes.IsFieldDirty(2) {
+		e.WriteFieldHeader(2, statesync.OpReplace)
+		e.WriteFloat64(t.y)
+	}
+	if changes.IsFieldDirty(3) {
+		e.WriteFieldHeader(3, statesync.OpReplace)
+		e.WriteInt32(t.health)
+	}
+	if changes.IsFieldDirty(4) {
+		e.WriteFieldHeader(4, statesync.OpReplace)
+		e.WriteString(t.ownerid)
+	}
+}
+
+func (t *Drone) EncodeAllTo(e *statesync.Encoder) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	// Encode all fields directly (no interface{} boxing)
+	e.WriteString(t.id)
+	e.WriteFloat64(t.x)
+	e.WriteFloat64(t.y)
+	e.WriteInt32(t.health)
+	e.WriteString(t.ownerid)
+}
+
+// Getters and Setters
+
+// ID returns the current value
+func (t *Drone) ID() string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.id
+}
+
+// SetID sets the value and marks it as changed
+func (t *Drone) SetID(v string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.id != v {
+		t.id = v
+		t.changes.Mark(0, statesync.OpReplace)
+	}
+
+}
+
+// X returns the current value
+func (t *Drone) X() float64 {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.x
+}
+
+// SetX sets the value and marks it as changed
+func (t *Drone) SetX(v float64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.x != v {
+		t.x = v
+		t.changes.Mark(1, statesync.OpReplace)
+	}
+
+}
+
+// Y returns the current value
+func (t *Drone) Y() float64 {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.y
+}
+
+// SetY sets the value and marks it as changed
+func (t *Drone) SetY(v float64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.y != v {
+		t.y = v
+		t.changes.Mark(2, statesync.OpReplace)
+	}
+
+}
+
+// Health returns the current value
+func (t *Drone) Health() int32 {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.health
+}
+
+// SetHealth sets the value and marks it as changed
+func (t *Drone) SetHealth(v int32) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.health != v {
+		t.health = v
+		t.changes.Mark(3, statesync.OpReplace)
+	}
+
+}
+
+// OwnerID returns the current value
+func (t *Drone) OwnerID() string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.ownerid
+}
+
+// SetOwnerID sets the value and marks it as changed
+func (t *Drone) SetOwnerID(v string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.ownerid != v {
+		t.ownerid = v
+		t.changes.Mark(4, statesync.OpReplace)
+	}
+
+}
+
 // GameState is a tracked state type
 type GameState struct {
 	mu      sync.RWMutex
@@ -276,14 +516,30 @@ type GameState struct {
 	players    []Player
 	scores     map[string]int64
 	secretseed int64
+	speedmult  float64
 }
 
-// NewGameState creates a new GameState
+// NewGameState creates a new GameState with default values
 func NewGameState() *GameState {
-	return &GameState{
+	t := &GameState{
 		changes: statesync.NewChangeSet(),
 		schema:  GameStateSchema(),
 	}
+	t.ResetToDefaults()
+	return t
+}
+
+// ResetToDefaults resets all fields to their default values
+func (t *GameState) ResetToDefaults() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.round = 1
+	t.phase = "lobby"
+	t.players = nil
+	t.scores = nil
+	t.secretseed = 0
+	t.speedmult = GetGameConfig().Speed
+	t.changes.MarkAll(5)
 }
 
 // GameStateSchema returns the schema for GameState
@@ -291,7 +547,7 @@ func GameStateSchema() *statesync.Schema {
 	return statesync.NewSchemaBuilder("GameState").
 		WithID(1).Int32("Round").String("Phase").
 		ArrayByKey("Players", statesync.TypeStruct, PlayerSchema(), "ID").
-		Map("Scores", statesync.TypeInt64, nil).Int64("SecretSeed").
+		Map("Scores", statesync.TypeInt64, nil).Int64("SecretSeed").Float64("SpeedMult").
 		Build()
 }
 
@@ -300,7 +556,7 @@ func GameStateSchema() *statesync.Schema {
 func (t *GameState) Schema() *statesync.Schema     { return t.schema }
 func (t *GameState) Changes() *statesync.ChangeSet { return t.changes }
 func (t *GameState) ClearChanges()                 { t.changes.Clear() }
-func (t *GameState) MarkAllDirty()                 { t.changes.MarkAll(4) }
+func (t *GameState) MarkAllDirty()                 { t.changes.MarkAll(5) }
 
 func (t *GameState) GetFieldValue(index uint8) interface{} {
 	t.mu.RLock()
@@ -316,6 +572,8 @@ func (t *GameState) GetFieldValue(index uint8) interface{} {
 		return t.scores
 	case 4:
 		return t.secretseed
+	case 5:
+		return t.speedmult
 	}
 	return nil
 }
@@ -344,6 +602,9 @@ func (t *GameState) EncodeChangesTo(e *statesync.Encoder) {
 	if changes.IsFieldDirty(4) {
 		count++
 	}
+	if changes.IsFieldDirty(5) {
+		count++
+	}
 	e.WriteChangeCount(count)
 
 	// Encode each changed field directly (no interface{} boxing)
@@ -367,6 +628,10 @@ func (t *GameState) EncodeChangesTo(e *statesync.Encoder) {
 		e.WriteFieldHeader(4, statesync.OpReplace)
 		e.WriteInt64(t.secretseed)
 	}
+	if changes.IsFieldDirty(5) {
+		e.WriteFieldHeader(5, statesync.OpReplace)
+		e.WriteFloat64(t.speedmult)
+	}
 }
 
 func (t *GameState) EncodeAllTo(e *statesync.Encoder) {
@@ -379,6 +644,7 @@ func (t *GameState) EncodeAllTo(e *statesync.Encoder) {
 	// Complex type field Players - TODO: handle arrays/maps/structs
 	// Complex type field Scores - TODO: handle arrays/maps/structs
 	e.WriteInt64(t.secretseed)
+	e.WriteFloat64(t.speedmult)
 }
 
 // Getters and Setters
@@ -559,4 +825,753 @@ func (t *GameState) SetSecretSeed(v int64) {
 		t.changes.Mark(4, statesync.OpReplace)
 	}
 
+}
+
+// SpeedMult returns the current value
+func (t *GameState) SpeedMult() float64 {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.speedmult
+}
+
+// SetSpeedMult sets the value and marks it as changed
+func (t *GameState) SetSpeedMult(v float64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.speedmult != v {
+		t.speedmult = v
+		t.changes.Mark(5, statesync.OpReplace)
+	}
+
+}
+
+// DroneMode is a tracked state type
+type DroneMode struct {
+	mu      sync.RWMutex
+	changes *statesync.ChangeSet
+	schema  *statesync.Schema
+
+	drones        []Drone
+	spawninterval int32
+	maxdrones     int32
+	gameduration  int32
+	timeremaining int32
+}
+
+// NewDroneMode creates a new DroneMode with default values
+func NewDroneMode() *DroneMode {
+	t := &DroneMode{
+		changes: statesync.NewChangeSet(),
+		schema:  DroneModeSchema(),
+	}
+	t.ResetToDefaults()
+	return t
+}
+
+// ResetToDefaults resets all fields to their default values
+func (t *DroneMode) ResetToDefaults() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.drones = nil
+	t.spawninterval = 5
+	t.maxdrones = 10
+	t.gameduration = 300
+	t.timeremaining = 300
+	t.changes.MarkAll(4)
+}
+
+// DroneModeSchema returns the schema for DroneMode
+func DroneModeSchema() *statesync.Schema {
+	return statesync.NewSchemaBuilder("DroneMode").
+		WithID(3).
+		ArrayByKey("Drones", statesync.TypeStruct, DroneSchema(), "ID").Int32("SpawnInterval").Int32("MaxDrones").Int32("GameDuration").Int32("TimeRemaining").
+		Build()
+}
+
+// Trackable implementation
+
+func (t *DroneMode) Schema() *statesync.Schema     { return t.schema }
+func (t *DroneMode) Changes() *statesync.ChangeSet { return t.changes }
+func (t *DroneMode) ClearChanges()                 { t.changes.Clear() }
+func (t *DroneMode) MarkAllDirty()                 { t.changes.MarkAll(4) }
+
+func (t *DroneMode) GetFieldValue(index uint8) interface{} {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	switch index {
+	case 0:
+		return t.drones
+	case 1:
+		return t.spawninterval
+	case 2:
+		return t.maxdrones
+	case 3:
+		return t.gameduration
+	case 4:
+		return t.timeremaining
+	}
+	return nil
+}
+
+// FastEncoder implementation - zero allocation encoding
+
+func (t *DroneMode) EncodeChangesTo(e *statesync.Encoder) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	// Count and write number of changes
+	changes := t.changes
+	count := 0
+	if changes.IsFieldDirty(0) {
+		count++
+	}
+	if changes.IsFieldDirty(1) {
+		count++
+	}
+	if changes.IsFieldDirty(2) {
+		count++
+	}
+	if changes.IsFieldDirty(3) {
+		count++
+	}
+	if changes.IsFieldDirty(4) {
+		count++
+	}
+	e.WriteChangeCount(count)
+
+	// Encode each changed field directly (no interface{} boxing)
+	if changes.IsFieldDirty(0) {
+		e.WriteFieldHeader(0, statesync.OpReplace)
+		// Complex type - TODO: handle arrays/maps/structs
+	}
+	if changes.IsFieldDirty(1) {
+		e.WriteFieldHeader(1, statesync.OpReplace)
+		e.WriteInt32(t.spawninterval)
+	}
+	if changes.IsFieldDirty(2) {
+		e.WriteFieldHeader(2, statesync.OpReplace)
+		e.WriteInt32(t.maxdrones)
+	}
+	if changes.IsFieldDirty(3) {
+		e.WriteFieldHeader(3, statesync.OpReplace)
+		e.WriteInt32(t.gameduration)
+	}
+	if changes.IsFieldDirty(4) {
+		e.WriteFieldHeader(4, statesync.OpReplace)
+		e.WriteInt32(t.timeremaining)
+	}
+}
+
+func (t *DroneMode) EncodeAllTo(e *statesync.Encoder) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	// Encode all fields directly (no interface{} boxing)
+	// Complex type field Drones - TODO: handle arrays/maps/structs
+	e.WriteInt32(t.spawninterval)
+	e.WriteInt32(t.maxdrones)
+	e.WriteInt32(t.gameduration)
+	e.WriteInt32(t.timeremaining)
+}
+
+// Getters and Setters
+
+// Drones returns the current value
+func (t *DroneMode) Drones() []Drone {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.drones
+}
+
+// SetDrones replaces the entire slice
+func (t *DroneMode) SetDrones(v []Drone) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.drones = v
+	t.changes.Mark(0, statesync.OpReplace)
+}
+
+// AppendDrones adds an element to the slice
+func (t *DroneMode) AppendDrones(v Drone) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.drones = append(t.drones, v)
+	arr := t.changes.GetOrCreateArray(0)
+	arr.MarkAdd(len(t.drones)-1, v)
+}
+
+// RemoveDronesAt removes an element at index
+func (t *DroneMode) RemoveDronesAt(index int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if index >= 0 && index < len(t.drones) {
+		t.drones = append(t.drones[:index], t.drones[index+1:]...)
+		arr := t.changes.GetOrCreateArray(0)
+		arr.MarkRemove(index)
+	}
+}
+
+// UpdateDronesAt updates an element at index
+func (t *DroneMode) UpdateDronesAt(index int, v Drone) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if index >= 0 && index < len(t.drones) {
+		t.drones[index] = v
+		arr := t.changes.GetOrCreateArray(0)
+		arr.MarkReplace(index, v)
+	}
+}
+
+// DronesLen returns the length of the slice
+func (t *DroneMode) DronesLen() int {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return len(t.drones)
+}
+
+// DronesAt returns the element at index
+func (t *DroneMode) DronesAt(index int) Drone {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if index >= 0 && index < len(t.drones) {
+		return t.drones[index]
+	}
+	var zero Drone
+	return zero
+}
+
+// SpawnInterval returns the current value
+func (t *DroneMode) SpawnInterval() int32 {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.spawninterval
+}
+
+// SetSpawnInterval sets the value and marks it as changed
+func (t *DroneMode) SetSpawnInterval(v int32) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.spawninterval != v {
+		t.spawninterval = v
+		t.changes.Mark(1, statesync.OpReplace)
+	}
+
+}
+
+// MaxDrones returns the current value
+func (t *DroneMode) MaxDrones() int32 {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.maxdrones
+}
+
+// SetMaxDrones sets the value and marks it as changed
+func (t *DroneMode) SetMaxDrones(v int32) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.maxdrones != v {
+		t.maxdrones = v
+		t.changes.Mark(2, statesync.OpReplace)
+	}
+
+}
+
+// GameDuration returns the current value
+func (t *DroneMode) GameDuration() int32 {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.gameduration
+}
+
+// SetGameDuration sets the value and marks it as changed
+func (t *DroneMode) SetGameDuration(v int32) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.gameduration != v {
+		t.gameduration = v
+		t.changes.Mark(3, statesync.OpReplace)
+	}
+
+}
+
+// TimeRemaining returns the current value
+func (t *DroneMode) TimeRemaining() int32 {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.timeremaining
+}
+
+// SetTimeRemaining sets the value and marks it as changed
+func (t *DroneMode) SetTimeRemaining(v int32) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.timeremaining != v {
+		t.timeremaining = v
+		t.changes.Mark(4, statesync.OpReplace)
+	}
+
+}
+
+// TournamentMode is a tracked state type
+type TournamentMode struct {
+	mu      sync.RWMutex
+	changes *statesync.ChangeSet
+	schema  *statesync.Schema
+
+	bracketround int32
+	matches      map[string]string
+	eliminated   []string
+	prizepool    int64
+}
+
+// NewTournamentMode creates a new TournamentMode with default values
+func NewTournamentMode() *TournamentMode {
+	t := &TournamentMode{
+		changes: statesync.NewChangeSet(),
+		schema:  TournamentModeSchema(),
+	}
+	t.ResetToDefaults()
+	return t
+}
+
+// ResetToDefaults resets all fields to their default values
+func (t *TournamentMode) ResetToDefaults() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.bracketround = 1
+	t.matches = nil
+	t.eliminated = nil
+	t.prizepool = 0
+	t.changes.MarkAll(3)
+}
+
+// TournamentModeSchema returns the schema for TournamentMode
+func TournamentModeSchema() *statesync.Schema {
+	return statesync.NewSchemaBuilder("TournamentMode").
+		WithID(5).Int32("BracketRound").
+		Map("Matches", statesync.TypeString, nil).
+		Array("Eliminated", statesync.TypeString, nil).Int64("PrizePool").
+		Build()
+}
+
+// Trackable implementation
+
+func (t *TournamentMode) Schema() *statesync.Schema     { return t.schema }
+func (t *TournamentMode) Changes() *statesync.ChangeSet { return t.changes }
+func (t *TournamentMode) ClearChanges()                 { t.changes.Clear() }
+func (t *TournamentMode) MarkAllDirty()                 { t.changes.MarkAll(3) }
+
+func (t *TournamentMode) GetFieldValue(index uint8) interface{} {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	switch index {
+	case 0:
+		return t.bracketround
+	case 1:
+		return t.matches
+	case 2:
+		return t.eliminated
+	case 3:
+		return t.prizepool
+	}
+	return nil
+}
+
+// FastEncoder implementation - zero allocation encoding
+
+func (t *TournamentMode) EncodeChangesTo(e *statesync.Encoder) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	// Count and write number of changes
+	changes := t.changes
+	count := 0
+	if changes.IsFieldDirty(0) {
+		count++
+	}
+	if changes.IsFieldDirty(1) {
+		count++
+	}
+	if changes.IsFieldDirty(2) {
+		count++
+	}
+	if changes.IsFieldDirty(3) {
+		count++
+	}
+	e.WriteChangeCount(count)
+
+	// Encode each changed field directly (no interface{} boxing)
+	if changes.IsFieldDirty(0) {
+		e.WriteFieldHeader(0, statesync.OpReplace)
+		e.WriteInt32(t.bracketround)
+	}
+	if changes.IsFieldDirty(1) {
+		e.WriteFieldHeader(1, statesync.OpReplace)
+		// Complex type - TODO: handle arrays/maps/structs
+	}
+	if changes.IsFieldDirty(2) {
+		e.WriteFieldHeader(2, statesync.OpReplace)
+		// Complex type - TODO: handle arrays/maps/structs
+	}
+	if changes.IsFieldDirty(3) {
+		e.WriteFieldHeader(3, statesync.OpReplace)
+		e.WriteInt64(t.prizepool)
+	}
+}
+
+func (t *TournamentMode) EncodeAllTo(e *statesync.Encoder) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	// Encode all fields directly (no interface{} boxing)
+	e.WriteInt32(t.bracketround)
+	// Complex type field Matches - TODO: handle arrays/maps/structs
+	// Complex type field Eliminated - TODO: handle arrays/maps/structs
+	e.WriteInt64(t.prizepool)
+}
+
+// Getters and Setters
+
+// BracketRound returns the current value
+func (t *TournamentMode) BracketRound() int32 {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.bracketround
+}
+
+// SetBracketRound sets the value and marks it as changed
+func (t *TournamentMode) SetBracketRound(v int32) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.bracketround != v {
+		t.bracketround = v
+		t.changes.Mark(0, statesync.OpReplace)
+	}
+
+}
+
+// Matches returns the current value
+func (t *TournamentMode) Matches() map[string]string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.matches
+}
+
+// SetMatches replaces the entire map
+func (t *TournamentMode) SetMatches(v map[string]string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.matches = v
+	t.changes.Mark(1, statesync.OpReplace)
+}
+
+// SetMatchesKey sets a map key
+func (t *TournamentMode) SetMatchesKey(key string, v string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.matches == nil {
+		t.matches = make(map[string]string)
+	}
+	_, existed := t.matches[key]
+	t.matches[key] = v
+	m := t.changes.GetOrCreateMap(1)
+	if existed {
+		m.MarkReplace(key, v)
+	} else {
+		m.MarkAdd(key, v)
+	}
+}
+
+// DeleteMatchesKey deletes a map key
+func (t *TournamentMode) DeleteMatchesKey(key string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.matches != nil {
+		if _, ok := t.matches[key]; ok {
+			delete(t.matches, key)
+			m := t.changes.GetOrCreateMap(1)
+			m.MarkRemove(key)
+		}
+	}
+}
+
+// MatchesGet returns the value for a key
+func (t *TournamentMode) MatchesGet(key string) (string, bool) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if t.matches == nil {
+		var zero string
+		return zero, false
+	}
+	v, ok := t.matches[key]
+	return v, ok
+}
+
+// Eliminated returns the current value
+func (t *TournamentMode) Eliminated() []string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.eliminated
+}
+
+// SetEliminated replaces the entire slice
+func (t *TournamentMode) SetEliminated(v []string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.eliminated = v
+	t.changes.Mark(2, statesync.OpReplace)
+}
+
+// AppendEliminated adds an element to the slice
+func (t *TournamentMode) AppendEliminated(v string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.eliminated = append(t.eliminated, v)
+	arr := t.changes.GetOrCreateArray(2)
+	arr.MarkAdd(len(t.eliminated)-1, v)
+}
+
+// RemoveEliminatedAt removes an element at index
+func (t *TournamentMode) RemoveEliminatedAt(index int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if index >= 0 && index < len(t.eliminated) {
+		t.eliminated = append(t.eliminated[:index], t.eliminated[index+1:]...)
+		arr := t.changes.GetOrCreateArray(2)
+		arr.MarkRemove(index)
+	}
+}
+
+// UpdateEliminatedAt updates an element at index
+func (t *TournamentMode) UpdateEliminatedAt(index int, v string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if index >= 0 && index < len(t.eliminated) {
+		t.eliminated[index] = v
+		arr := t.changes.GetOrCreateArray(2)
+		arr.MarkReplace(index, v)
+	}
+}
+
+// EliminatedLen returns the length of the slice
+func (t *TournamentMode) EliminatedLen() int {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return len(t.eliminated)
+}
+
+// EliminatedAt returns the element at index
+func (t *TournamentMode) EliminatedAt(index int) string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if index >= 0 && index < len(t.eliminated) {
+		return t.eliminated[index]
+	}
+	var zero string
+	return zero
+}
+
+// PrizePool returns the current value
+func (t *TournamentMode) PrizePool() int64 {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.prizepool
+}
+
+// SetPrizePool sets the value and marks it as changed
+func (t *TournamentMode) SetPrizePool(v int64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.prizepool != v {
+		t.prizepool = v
+		t.changes.Mark(3, statesync.OpReplace)
+	}
+
+}
+
+// ==================================================
+// Schema Registry - manages root schemas activation
+// ==================================================
+
+// SchemaRegistry manages activation state of root schemas
+type SchemaRegistry struct {
+	mu        sync.RWMutex
+	active    map[string]bool
+	schemas   map[string]func() interface{} // Factory functions
+	instances map[string]interface{}        // Active instances
+}
+
+var (
+	schemaRegistryInstance *SchemaRegistry
+	schemaRegistryOnce     sync.Once
+)
+
+// GetSchemaRegistry returns the singleton schema registry
+func GetSchemaRegistry() *SchemaRegistry {
+	schemaRegistryOnce.Do(func() {
+		schemaRegistryInstance = &SchemaRegistry{
+			active:    make(map[string]bool),
+			schemas:   make(map[string]func() interface{}),
+			instances: make(map[string]interface{}),
+		}
+		// Register all root schemas
+		schemaRegistryInstance.schemas["GameState"] = func() interface{} { return NewGameState() }
+		schemaRegistryInstance.active["GameState"] = true
+		schemaRegistryInstance.instances["GameState"] = NewGameState()
+		schemaRegistryInstance.schemas["DroneMode"] = func() interface{} { return NewDroneMode() }
+		schemaRegistryInstance.active["DroneMode"] = false
+		schemaRegistryInstance.schemas["TournamentMode"] = func() interface{} { return NewTournamentMode() }
+		schemaRegistryInstance.active["TournamentMode"] = false
+	})
+	return schemaRegistryInstance
+}
+
+// IsActive returns true if the schema is currently active
+func (r *SchemaRegistry) IsActive(name string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.active[name]
+}
+
+// Activate activates a schema (resets to defaults)
+func (r *SchemaRegistry) Activate(name string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	factory, ok := r.schemas[name]
+	if !ok {
+		return fmt.Errorf("unknown schema: %s", name)
+	}
+
+	// Create new instance with defaults
+	r.instances[name] = factory()
+	r.active[name] = true
+	return nil
+}
+
+// Deactivate deactivates a schema
+func (r *SchemaRegistry) Deactivate(name string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if _, ok := r.schemas[name]; !ok {
+		return fmt.Errorf("unknown schema: %s", name)
+	}
+
+	delete(r.instances, name)
+	r.active[name] = false
+	return nil
+}
+
+// Get returns the active instance of a schema (nil if not active)
+func (r *SchemaRegistry) Get(name string) interface{} {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.instances[name]
+}
+
+// GetActive returns all active schema names
+func (r *SchemaRegistry) GetActive() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var result []string
+	for name, active := range r.active {
+		if active {
+			result = append(result, name)
+		}
+	}
+	return result
+}
+
+// ResetAll resets all schemas to their default activation state
+func (r *SchemaRegistry) ResetAll() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.instances = make(map[string]interface{})
+	r.active["GameState"] = true
+	r.instances["GameState"] = r.schemas["GameState"]()
+	r.active["DroneMode"] = false
+	r.active["TournamentMode"] = false
+}
+
+// Typed getters for convenience
+
+// GetGameState returns the active GameState instance (nil if not active)
+func GetGameStateInstance() *GameState {
+	inst := GetSchemaRegistry().Get("GameState")
+	if inst == nil {
+		return nil
+	}
+	return inst.(*GameState)
+}
+
+// ActivateGameState activates the GameState schema with defaults
+func ActivateGameState() error {
+	return GetSchemaRegistry().Activate("GameState")
+}
+
+// DeactivateGameState deactivates the GameState schema
+func DeactivateGameState() error {
+	return GetSchemaRegistry().Deactivate("GameState")
+}
+
+// IsGameStateActive returns true if GameState is active
+func IsGameStateActive() bool {
+	return GetSchemaRegistry().IsActive("GameState")
+}
+
+// GetDroneMode returns the active DroneMode instance (nil if not active)
+func GetDroneModeInstance() *DroneMode {
+	inst := GetSchemaRegistry().Get("DroneMode")
+	if inst == nil {
+		return nil
+	}
+	return inst.(*DroneMode)
+}
+
+// ActivateDroneMode activates the DroneMode schema with defaults
+func ActivateDroneMode() error {
+	return GetSchemaRegistry().Activate("DroneMode")
+}
+
+// DeactivateDroneMode deactivates the DroneMode schema
+func DeactivateDroneMode() error {
+	return GetSchemaRegistry().Deactivate("DroneMode")
+}
+
+// IsDroneModeActive returns true if DroneMode is active
+func IsDroneModeActive() bool {
+	return GetSchemaRegistry().IsActive("DroneMode")
+}
+
+// GetTournamentMode returns the active TournamentMode instance (nil if not active)
+func GetTournamentModeInstance() *TournamentMode {
+	inst := GetSchemaRegistry().Get("TournamentMode")
+	if inst == nil {
+		return nil
+	}
+	return inst.(*TournamentMode)
+}
+
+// ActivateTournamentMode activates the TournamentMode schema with defaults
+func ActivateTournamentMode() error {
+	return GetSchemaRegistry().Activate("TournamentMode")
+}
+
+// DeactivateTournamentMode deactivates the TournamentMode schema
+func DeactivateTournamentMode() error {
+	return GetSchemaRegistry().Deactivate("TournamentMode")
+}
+
+// IsTournamentModeActive returns true if TournamentMode is active
+func IsTournamentModeActive() bool {
+	return GetSchemaRegistry().IsActive("TournamentMode")
 }
