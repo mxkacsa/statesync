@@ -3,6 +3,7 @@ package statesync
 import (
 	"encoding/binary"
 	"math"
+	"reflect"
 	"sort"
 )
 
@@ -667,7 +668,11 @@ func getArrayLength(v interface{}) int {
 	case []Trackable:
 		return len(arr)
 	}
-	// Unknown type - return 0 (caller should use schema-generated types)
+	// Reflection fallback for custom struct slices (e.g., []ChatMessage)
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Slice {
+		return rv.Len()
+	}
 	return 0
 }
 
@@ -706,6 +711,18 @@ func getArrayElement(v interface{}, i int) interface{} {
 	case []Trackable:
 		return arr[i]
 	}
+	// Reflection fallback for custom struct slices
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Slice && i < rv.Len() {
+		elem := rv.Index(i)
+		// For struct values, create a pointer so it can implement Trackable
+		if elem.Kind() == reflect.Struct {
+			ptr := reflect.New(elem.Type())
+			ptr.Elem().Set(elem)
+			return ptr.Interface()
+		}
+		return elem.Interface()
+	}
 	return nil
 }
 
@@ -733,6 +750,26 @@ func getMapKeysValues(v interface{}) ([]string, []interface{}) {
 		return extractMapKVTyped(m)
 	case map[string]bool:
 		return extractMapKVTyped(m)
+	}
+	// Reflection fallback for custom struct maps (e.g., map[string]PlayerState)
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Map && rv.Type().Key().Kind() == reflect.String {
+		keys := make([]string, 0, rv.Len())
+		values := make([]interface{}, 0, rv.Len())
+		for _, k := range rv.MapKeys() {
+			keys = append(keys, k.String())
+			val := rv.MapIndex(k)
+			// For struct values, create a pointer so it can implement Trackable
+			if val.Kind() == reflect.Struct {
+				ptr := reflect.New(val.Type())
+				ptr.Elem().Set(val)
+				values = append(values, ptr.Interface())
+			} else {
+				values = append(values, val.Interface())
+			}
+		}
+		sortStringsWithValues(keys, values)
+		return keys, values
 	}
 	return nil, nil
 }
