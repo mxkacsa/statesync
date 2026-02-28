@@ -35,10 +35,10 @@ func encoderMethod(typ string) string {
 		return "WriteString"
 	case "bool":
 		return "WriteBool"
-	case "[]byte":
+	case "bytes", "[]byte":
 		return "WriteBytes"
 	default:
-		return "" // Complex types need special handling
+		return "" // Complex types (map/array/struct) need slow-path encoding
 	}
 }
 
@@ -128,6 +128,17 @@ func hasConfigDefaults(schema *SchemaFile) bool {
 	return false
 }
 
+// typeHasComplexFields returns true if a type has any map, array, or struct fields
+// that cannot be handled by the fast encoder path
+func typeHasComplexFields(t *TypeDef) bool {
+	for _, f := range t.Fields {
+		if encoderMethod(f.Type) == "" {
+			return true
+		}
+	}
+	return false
+}
+
 // getRootSchemas returns only root schemas
 func getRootSchemas(schema *SchemaFile) []*TypeDef {
 	var roots []*TypeDef
@@ -156,7 +167,8 @@ func GenerateGo(schema *SchemaFile) ([]byte, error) {
 		"hasAutoGenUUID":    hasAutoGenUUID,
 		"getRootSchemas":    getRootSchemas,
 		"isRoot":            func(t *TypeDef) bool { return t.Role == RoleRoot },
-		"isActiveByDefault": func(t *TypeDef) bool { return t.DefaultState == "active" },
+		"isActiveByDefault":  func(t *TypeDef) bool { return t.DefaultState == "active" },
+		"hasComplexFields":   typeHasComplexFields,
 	}).Parse(goTemplate)
 	if err != nil {
 		return nil, fmt.Errorf("template parse error: %w", err)
@@ -268,7 +280,9 @@ func (t *{{$t.Name}}) GetFieldValue(index uint8) interface{} {
 	return nil
 }
 
+{{if not (hasComplexFields $t)}}
 // FastEncoder implementation - zero allocation encoding
+// Generated only for types with all primitive fields (no maps/arrays/structs)
 
 func (t *{{$t.Name}}) EncodeChangesTo(e *statesync.Encoder) {
 	t.mu.RLock()
@@ -284,14 +298,9 @@ func (t *{{$t.Name}}) EncodeChangesTo(e *statesync.Encoder) {
 
 	// Encode each changed field directly (no interface{} boxing)
 	{{- range $i, $f := $t.Fields}}
-	{{- $em := encoderMethod $f.Type}}
 	if changes.IsFieldDirty({{$i}}) {
 		e.WriteFieldHeader({{$i}}, statesync.OpReplace)
-		{{- if $em}}
-		e.{{$em}}(t.{{lower $f.Name}})
-		{{- else}}
-		// Complex type - TODO: handle arrays/maps/structs
-		{{- end}}
+		e.{{encoderMethod $f.Type}}(t.{{lower $f.Name}})
 	}
 	{{- end}}
 }
@@ -302,14 +311,10 @@ func (t *{{$t.Name}}) EncodeAllTo(e *statesync.Encoder) {
 
 	// Encode all fields directly (no interface{} boxing)
 	{{- range $i, $f := $t.Fields}}
-	{{- $em := encoderMethod $f.Type}}
-	{{- if $em}}
-	e.{{$em}}(t.{{lower $f.Name}})
-	{{- else}}
-	// Complex type field {{$f.Name}} - TODO: handle arrays/maps/structs
-	{{- end}}
+	e.{{encoderMethod $f.Type}}(t.{{lower $f.Name}})
 	{{- end}}
 }
+{{end}}
 
 // Getters and Setters
 {{range $i, $f := $t.Fields}}

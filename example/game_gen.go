@@ -77,67 +77,6 @@ func (t *Player) GetFieldValue(index uint8) interface{} {
 	return nil
 }
 
-// FastEncoder implementation - zero allocation encoding
-
-func (t *Player) EncodeChangesTo(e *statesync.Encoder) {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-
-	// Count and write number of changes
-	changes := t.changes
-	count := 0
-	if changes.IsFieldDirty(0) {
-		count++
-	}
-	if changes.IsFieldDirty(1) {
-		count++
-	}
-	if changes.IsFieldDirty(2) {
-		count++
-	}
-	if changes.IsFieldDirty(3) {
-		count++
-	}
-	if changes.IsFieldDirty(4) {
-		count++
-	}
-	e.WriteChangeCount(count)
-
-	// Encode each changed field directly (no interface{} boxing)
-	if changes.IsFieldDirty(0) {
-		e.WriteFieldHeader(0, statesync.OpReplace)
-		e.WriteString(t.id)
-	}
-	if changes.IsFieldDirty(1) {
-		e.WriteFieldHeader(1, statesync.OpReplace)
-		e.WriteString(t.name)
-	}
-	if changes.IsFieldDirty(2) {
-		e.WriteFieldHeader(2, statesync.OpReplace)
-		e.WriteInt64(t.score)
-	}
-	if changes.IsFieldDirty(3) {
-		e.WriteFieldHeader(3, statesync.OpReplace)
-		// Complex type - TODO: handle arrays/maps/structs
-	}
-	if changes.IsFieldDirty(4) {
-		e.WriteFieldHeader(4, statesync.OpReplace)
-		e.WriteBool(t.ready)
-	}
-}
-
-func (t *Player) EncodeAllTo(e *statesync.Encoder) {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-
-	// Encode all fields directly (no interface{} boxing)
-	e.WriteString(t.id)
-	e.WriteString(t.name)
-	e.WriteInt64(t.score)
-	// Complex type field Hand - TODO: handle arrays/maps/structs
-	e.WriteBool(t.ready)
-}
-
 // Getters and Setters
 
 // ID returns the current value
@@ -348,6 +287,7 @@ func (t *Drone) GetFieldValue(index uint8) interface{} {
 }
 
 // FastEncoder implementation - zero allocation encoding
+// Generated only for types with all primitive fields (no maps/arrays/structs)
 
 func (t *Drone) EncodeChangesTo(e *statesync.Encoder) {
 	t.mu.RLock()
@@ -576,75 +516,6 @@ func (t *GameState) GetFieldValue(index uint8) interface{} {
 		return t.speedmult
 	}
 	return nil
-}
-
-// FastEncoder implementation - zero allocation encoding
-
-func (t *GameState) EncodeChangesTo(e *statesync.Encoder) {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-
-	// Count and write number of changes
-	changes := t.changes
-	count := 0
-	if changes.IsFieldDirty(0) {
-		count++
-	}
-	if changes.IsFieldDirty(1) {
-		count++
-	}
-	if changes.IsFieldDirty(2) {
-		count++
-	}
-	if changes.IsFieldDirty(3) {
-		count++
-	}
-	if changes.IsFieldDirty(4) {
-		count++
-	}
-	if changes.IsFieldDirty(5) {
-		count++
-	}
-	e.WriteChangeCount(count)
-
-	// Encode each changed field directly (no interface{} boxing)
-	if changes.IsFieldDirty(0) {
-		e.WriteFieldHeader(0, statesync.OpReplace)
-		e.WriteInt32(t.round)
-	}
-	if changes.IsFieldDirty(1) {
-		e.WriteFieldHeader(1, statesync.OpReplace)
-		e.WriteString(t.phase)
-	}
-	if changes.IsFieldDirty(2) {
-		e.WriteFieldHeader(2, statesync.OpReplace)
-		// Complex type - TODO: handle arrays/maps/structs
-	}
-	if changes.IsFieldDirty(3) {
-		e.WriteFieldHeader(3, statesync.OpReplace)
-		// Complex type - TODO: handle arrays/maps/structs
-	}
-	if changes.IsFieldDirty(4) {
-		e.WriteFieldHeader(4, statesync.OpReplace)
-		e.WriteInt64(t.secretseed)
-	}
-	if changes.IsFieldDirty(5) {
-		e.WriteFieldHeader(5, statesync.OpReplace)
-		e.WriteFloat64(t.speedmult)
-	}
-}
-
-func (t *GameState) EncodeAllTo(e *statesync.Encoder) {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-
-	// Encode all fields directly (no interface{} boxing)
-	e.WriteInt32(t.round)
-	e.WriteString(t.phase)
-	// Complex type field Players - TODO: handle arrays/maps/structs
-	// Complex type field Scores - TODO: handle arrays/maps/structs
-	e.WriteInt64(t.secretseed)
-	e.WriteFloat64(t.speedmult)
 }
 
 // Getters and Setters
@@ -914,67 +785,6 @@ func (t *DroneMode) GetFieldValue(index uint8) interface{} {
 	return nil
 }
 
-// FastEncoder implementation - zero allocation encoding
-
-func (t *DroneMode) EncodeChangesTo(e *statesync.Encoder) {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-
-	// Count and write number of changes
-	changes := t.changes
-	count := 0
-	if changes.IsFieldDirty(0) {
-		count++
-	}
-	if changes.IsFieldDirty(1) {
-		count++
-	}
-	if changes.IsFieldDirty(2) {
-		count++
-	}
-	if changes.IsFieldDirty(3) {
-		count++
-	}
-	if changes.IsFieldDirty(4) {
-		count++
-	}
-	e.WriteChangeCount(count)
-
-	// Encode each changed field directly (no interface{} boxing)
-	if changes.IsFieldDirty(0) {
-		e.WriteFieldHeader(0, statesync.OpReplace)
-		// Complex type - TODO: handle arrays/maps/structs
-	}
-	if changes.IsFieldDirty(1) {
-		e.WriteFieldHeader(1, statesync.OpReplace)
-		e.WriteInt32(t.spawninterval)
-	}
-	if changes.IsFieldDirty(2) {
-		e.WriteFieldHeader(2, statesync.OpReplace)
-		e.WriteInt32(t.maxdrones)
-	}
-	if changes.IsFieldDirty(3) {
-		e.WriteFieldHeader(3, statesync.OpReplace)
-		e.WriteInt32(t.gameduration)
-	}
-	if changes.IsFieldDirty(4) {
-		e.WriteFieldHeader(4, statesync.OpReplace)
-		e.WriteInt32(t.timeremaining)
-	}
-}
-
-func (t *DroneMode) EncodeAllTo(e *statesync.Encoder) {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-
-	// Encode all fields directly (no interface{} boxing)
-	// Complex type field Drones - TODO: handle arrays/maps/structs
-	e.WriteInt32(t.spawninterval)
-	e.WriteInt32(t.maxdrones)
-	e.WriteInt32(t.gameduration)
-	e.WriteInt32(t.timeremaining)
-}
-
 // Getters and Setters
 
 // Drones returns the current value
@@ -1180,59 +990,6 @@ func (t *TournamentMode) GetFieldValue(index uint8) interface{} {
 		return t.prizepool
 	}
 	return nil
-}
-
-// FastEncoder implementation - zero allocation encoding
-
-func (t *TournamentMode) EncodeChangesTo(e *statesync.Encoder) {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-
-	// Count and write number of changes
-	changes := t.changes
-	count := 0
-	if changes.IsFieldDirty(0) {
-		count++
-	}
-	if changes.IsFieldDirty(1) {
-		count++
-	}
-	if changes.IsFieldDirty(2) {
-		count++
-	}
-	if changes.IsFieldDirty(3) {
-		count++
-	}
-	e.WriteChangeCount(count)
-
-	// Encode each changed field directly (no interface{} boxing)
-	if changes.IsFieldDirty(0) {
-		e.WriteFieldHeader(0, statesync.OpReplace)
-		e.WriteInt32(t.bracketround)
-	}
-	if changes.IsFieldDirty(1) {
-		e.WriteFieldHeader(1, statesync.OpReplace)
-		// Complex type - TODO: handle arrays/maps/structs
-	}
-	if changes.IsFieldDirty(2) {
-		e.WriteFieldHeader(2, statesync.OpReplace)
-		// Complex type - TODO: handle arrays/maps/structs
-	}
-	if changes.IsFieldDirty(3) {
-		e.WriteFieldHeader(3, statesync.OpReplace)
-		e.WriteInt64(t.prizepool)
-	}
-}
-
-func (t *TournamentMode) EncodeAllTo(e *statesync.Encoder) {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-
-	// Encode all fields directly (no interface{} boxing)
-	e.WriteInt32(t.bracketround)
-	// Complex type field Matches - TODO: handle arrays/maps/structs
-	// Complex type field Eliminated - TODO: handle arrays/maps/structs
-	e.WriteInt64(t.prizepool)
 }
 
 // Getters and Setters
