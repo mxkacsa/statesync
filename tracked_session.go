@@ -233,7 +233,7 @@ func (s *TrackedSession[T, A, ID]) Full(id ID) []byte {
 	}
 
 	// Encode
-	data := s.state.encoder.EncodeAll(state)
+	data := s.state.lockedEncodeAll(state)
 
 	// Hook: after encode
 	if hooks.OnAfterEncode != nil {
@@ -325,11 +325,11 @@ func (s *TrackedSession[T, A, ID]) Broadcast() map[ID][]byte {
 		// Encode
 		if needsFull {
 			// New client needs full state
-			data = s.state.encoder.EncodeAll(state)
+			data = s.state.lockedEncodeAll(state)
 		} else if filter == nil {
 			// Use cached full diff for unfiltered clients
 			if !fullDiffComputed {
-				fullDiff = s.state.Encode()
+				fullDiff = s.state.lockedEncode(rawState)
 				fullDiffComputed = true
 			}
 			data = fullDiff
@@ -338,7 +338,7 @@ func (s *TrackedSession[T, A, ID]) Broadcast() map[ID][]byte {
 			if !state.Changes().HasChanges() {
 				continue
 			}
-			data = s.state.encoder.Encode(state)
+			data = s.state.lockedEncode(state)
 		}
 
 		// Hook: after encode

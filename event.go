@@ -320,9 +320,13 @@ func (e *EventPayloadEncoder) Reset() {
 	e.pos = 0
 }
 
-// Bytes returns the encoded bytes
+// Bytes returns a copy of the encoded bytes.
+// Returns a new slice each call to prevent buffer aliasing
+// when the encoder is reused across multiple Encode calls.
 func (e *EventPayloadEncoder) Bytes() []byte {
-	return e.buf[:e.pos]
+	result := make([]byte, e.pos)
+	copy(result, e.buf[:e.pos])
+	return result
 }
 
 func (e *EventPayloadEncoder) grow(n int) {

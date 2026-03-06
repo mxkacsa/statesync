@@ -7,11 +7,12 @@ import (
 // TrackedState manages state with automatic change tracking
 // T must implement Trackable
 type TrackedState[T Trackable, A any] struct {
-	mu       sync.RWMutex
-	current  T
-	effects  []Effect[T, A]
-	encoder  *Encoder
-	registry *SchemaRegistry
+	mu        sync.RWMutex
+	current   T
+	effects   []Effect[T, A]
+	encoder   *Encoder
+	encoderMu sync.Mutex // protects encoder from concurrent access
+	registry  *SchemaRegistry
 }
 
 // TrackedConfig configuration for TrackedState
@@ -99,6 +100,8 @@ func (s *TrackedState[T, A]) Encode() []byte {
 	if !state.Changes().HasChanges() {
 		return nil
 	}
+	s.encoderMu.Lock()
+	defer s.encoderMu.Unlock()
 	return s.encoder.Encode(state)
 }
 
@@ -108,6 +111,8 @@ func (s *TrackedState[T, A]) EncodeAll() []byte {
 	defer s.mu.RUnlock()
 
 	state := s.withEffects(s.current)
+	s.encoderMu.Lock()
+	defer s.encoderMu.Unlock()
 	return s.encoder.EncodeAll(state)
 }
 
@@ -123,6 +128,8 @@ func (s *TrackedState[T, A]) EncodeWithFilter(filter func(T) T) []byte {
 	if any(state) == nil || !state.Changes().HasChanges() {
 		return nil
 	}
+	s.encoderMu.Lock()
+	defer s.encoderMu.Unlock()
 	return s.encoder.Encode(state)
 }
 
@@ -138,6 +145,26 @@ func (s *TrackedState[T, A]) EncodeAllWithFilter(filter func(T) T) []byte {
 	if any(state) == nil {
 		return nil
 	}
+	s.encoderMu.Lock()
+	defer s.encoderMu.Unlock()
+	return s.encoder.EncodeAll(state)
+}
+
+// lockedEncode encodes changes for a pre-resolved state.
+// The caller must have already applied effects/filters on the state.
+// This acquires only the encoder mutex, not the state mutex.
+func (s *TrackedState[T, A]) lockedEncode(state Trackable) []byte {
+	s.encoderMu.Lock()
+	defer s.encoderMu.Unlock()
+	return s.encoder.Encode(state)
+}
+
+// lockedEncodeAll encodes full state for a pre-resolved state.
+// The caller must have already applied effects/filters on the state.
+// This acquires only the encoder mutex, not the state mutex.
+func (s *TrackedState[T, A]) lockedEncodeAll(state Trackable) []byte {
+	s.encoderMu.Lock()
+	defer s.encoderMu.Unlock()
 	return s.encoder.EncodeAll(state)
 }
 

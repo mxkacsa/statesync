@@ -278,6 +278,9 @@ func (d *Decoder) decodeField(field *FieldMeta) (interface{}, error) {
 	case TypeTimestamp:
 		return d.readInt64()
 	case TypeStruct:
+		if field.ChildSchema == nil {
+			return nil, fmt.Errorf("nil ChildSchema for struct field %q", field.Name)
+		}
 		return d.decodeStruct(field.ChildSchema)
 	case TypeArray:
 		return d.decodeArray(field)
@@ -392,6 +395,9 @@ func (d *Decoder) decodeArrayChanges(field *FieldMeta) ([]DecodedArrayChange, er
 // decodeArrayElement decodes a single array element
 func (d *Decoder) decodeArrayElement(field *FieldMeta) (interface{}, error) {
 	if field.ElemType == TypeStruct {
+		if field.ChildSchema == nil {
+			return nil, fmt.Errorf("nil ChildSchema for array element in field %q", field.Name)
+		}
 		return d.decodeStruct(field.ChildSchema)
 	}
 	tempField := &FieldMeta{Type: field.ElemType}
@@ -477,6 +483,9 @@ func (d *Decoder) decodeMapChanges(field *FieldMeta) ([]DecodedMapChange, error)
 // decodeMapValue decodes a single map value
 func (d *Decoder) decodeMapValue(field *FieldMeta) (interface{}, error) {
 	if field.ElemType == TypeStruct {
+		if field.ChildSchema == nil {
+			return nil, fmt.Errorf("nil ChildSchema for map value in field %q", field.Name)
+		}
 		return d.decodeStruct(field.ChildSchema)
 	}
 	tempField := &FieldMeta{Type: field.ElemType}
