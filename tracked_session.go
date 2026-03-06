@@ -518,10 +518,12 @@ func (s *TrackedSession[T, A, ID]) Reconnect(id ID, lastSeq uint64, filter Filte
 		return nil, false
 	}
 
-	// Need full state sync
+	// Need full state sync — register client with needsFull=true so that
+	// if a concurrent Broadcast() picks it up before Full() returns,
+	// it sends another full state (idempotent) rather than an orphaned patch.
 	s.mu.Lock()
 	s.clients[id] = filter
-	s.clientNeedsFull[id] = false
+	s.clientNeedsFull[id] = true
 	s.clientSeq[id] = s.seq - 1
 	s.mu.Unlock()
 

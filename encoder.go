@@ -142,14 +142,21 @@ func (e *Encoder) EncodeAll(t Trackable) []byte {
 func (e *Encoder) encodeChanges(t Trackable, schema *Schema, changes *ChangeSet) {
 	changedFields := changes.ChangedFields()
 
-	// Number of changes
-	e.writeVarUint(uint64(len(changedFields)))
-
+	// Filter to valid fields only — if ChangedFields returns an index beyond
+	// the schema (e.g., from incorrect MarkAll), skipping it after writing
+	// the count would cause a count/record mismatch and corrupt the decoder.
+	valid := changedFields[:0]
 	for _, idx := range changedFields {
-		field := schema.Field(idx)
-		if field == nil {
-			continue
+		if schema.Field(idx) != nil {
+			valid = append(valid, idx)
 		}
+	}
+
+	// Number of changes
+	e.writeVarUint(uint64(len(valid)))
+
+	for _, idx := range valid {
+		field := schema.Field(idx)
 
 		// Field index
 		e.writeByte(idx)

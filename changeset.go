@@ -267,13 +267,13 @@ func (cs *ChangeSet) changedFieldsLocked() []uint8 {
 			count++
 		}
 	}
-	for idx := range cs.arrays {
-		if cs.dirty[idx/64]&(1<<(idx%64)) == 0 {
+	for idx, arr := range cs.arrays {
+		if cs.dirty[idx/64]&(1<<(idx%64)) == 0 && arr.HasChanges() {
 			count++
 		}
 	}
-	for idx := range cs.maps {
-		if cs.dirty[idx/64]&(1<<(idx%64)) == 0 {
+	for idx, m := range cs.maps {
+		if cs.dirty[idx/64]&(1<<(idx%64)) == 0 && m.HasChanges() {
 			count++
 		}
 	}
@@ -304,13 +304,13 @@ func (cs *ChangeSet) changedFieldsLocked() []uint8 {
 			result = append(result, idx)
 		}
 	}
-	for idx := range cs.arrays {
-		if cs.dirty[idx/64]&(1<<(idx%64)) == 0 {
+	for idx, arr := range cs.arrays {
+		if cs.dirty[idx/64]&(1<<(idx%64)) == 0 && arr.HasChanges() {
 			result = append(result, idx)
 		}
 	}
-	for idx := range cs.maps {
-		if cs.dirty[idx/64]&(1<<(idx%64)) == 0 {
+	for idx, m := range cs.maps {
+		if cs.dirty[idx/64]&(1<<(idx%64)) == 0 && m.HasChanges() {
 			result = append(result, idx)
 		}
 	}

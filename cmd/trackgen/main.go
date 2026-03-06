@@ -513,7 +513,7 @@ func visibilityCheck(fi FieldInfo, ownerExpr string) string {
 		if fi.OwnerField != "" {
 			return "(" + ownerExpr + "." + fi.OwnerField + " == ctx.ViewerID || (ctx.ViewerTeam != \"\" && " + ownerExpr + " == ctx.ViewerTeam))"
 		}
-		return "(" + ownerExpr + " == ctx.ViewerID || ctx.ViewerTeam != \"\")"
+		return "(" + ownerExpr + " == ctx.ViewerID || (ctx.ViewerTeam != \"\" && " + ownerExpr + " == ctx.ViewerTeam))"
 	case "private":
 		return "false"
 	case "public", "":

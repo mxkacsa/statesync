@@ -102,6 +102,11 @@ func (dr *DiffRecorder) Records() []DiffRecord {
 func (dr *DiffRecorder) Clear() {
 	dr.mu.Lock()
 	defer dr.mu.Unlock()
+	// Zero out retained elements to allow GC of Data/Events byte slices
+	var zero DiffRecord
+	for i := range dr.records {
+		dr.records[i] = zero
+	}
 	dr.records = dr.records[:0]
 }
 

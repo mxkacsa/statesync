@@ -820,7 +820,7 @@ type allTypesTrackable struct {
 func (a *allTypesTrackable) Schema() *Schema     { return a.schema }
 func (a *allTypesTrackable) Changes() *ChangeSet { return a.changes }
 func (a *allTypesTrackable) ClearChanges()       { a.changes.Clear() }
-func (a *allTypesTrackable) MarkAllDirty()       { a.changes.MarkAll(13) }
+func (a *allTypesTrackable) MarkAllDirty()       { a.changes.MarkAll(12) } // 13 fields, max index = 12
 func (a *allTypesTrackable) GetFieldValue(idx uint8) interface{} {
 	switch idx {
 	case 0:
