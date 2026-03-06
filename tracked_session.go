@@ -565,14 +565,14 @@ func (s *TrackedSession[T, A, ID]) ScheduleBroadcast() {
 		callback := s.onBroadcast
 		s.debounceMu.Unlock()
 
-		if callback != nil {
-			s.broadcastMu.Lock()
-			diffs := s.Tick()
-			if len(diffs) > 0 {
-				callback(diffs)
-			}
-			s.broadcastMu.Unlock()
+		// Always call Tick() to commit changes and advance seq,
+		// even if no callback is set — otherwise changes accumulate indefinitely.
+		s.broadcastMu.Lock()
+		diffs := s.Tick()
+		if callback != nil && len(diffs) > 0 {
+			callback(diffs)
 		}
+		s.broadcastMu.Unlock()
 		return
 	}
 
@@ -593,14 +593,14 @@ func (s *TrackedSession[T, A, ID]) ScheduleBroadcast() {
 		callback := s.onBroadcast
 		s.debounceMu.Unlock()
 
-		if callback != nil {
-			s.broadcastMu.Lock()
-			diffs := s.Tick()
-			if len(diffs) > 0 {
-				callback(diffs)
-			}
-			s.broadcastMu.Unlock()
+		// Always call Tick() to commit changes and advance seq,
+		// even if no callback is set — otherwise changes accumulate indefinitely.
+		s.broadcastMu.Lock()
+		diffs := s.Tick()
+		if callback != nil && len(diffs) > 0 {
+			callback(diffs)
 		}
+		s.broadcastMu.Unlock()
 	})
 	s.debounceMu.Unlock()
 }
