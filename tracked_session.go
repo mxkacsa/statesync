@@ -532,8 +532,12 @@ func (s *TrackedSession[T, A, ID]) Reconnect(id ID, lastSeq uint64, filter Filte
 		return nil, false
 	}
 
-	// Update clientSeq to account for any ticks that fired during Full()
+	// Update clientSeq and clear needsFull flag after Full() completes.
+	// The flag was set to true before Full() to protect against concurrent
+	// Broadcast sending an orphaned patch; now that full state is captured,
+	// clear it so the next Tick sends a normal diff instead of another full state.
 	s.mu.Lock()
+	s.clientNeedsFull[id] = false
 	s.clientSeq[id] = s.seq - 1
 	s.mu.Unlock()
 
