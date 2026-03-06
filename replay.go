@@ -2,6 +2,7 @@ package statesync
 
 import (
 	"encoding/json"
+	"sync"
 	"time"
 )
 
@@ -34,6 +35,7 @@ type DiffRecord struct {
 // DiffRecorder captures diffs for persistence.
 // Attach this to TrackedSession.SetHooks() to capture all state changes.
 type DiffRecorder struct {
+	mu      sync.Mutex
 	records []DiffRecord
 	source  string
 	tick    uint64
@@ -77,21 +79,29 @@ func (dr *DiffRecorder) Record(seq uint64, data []byte, events []Event, delta ti
 		copy(record.Events, events)
 	}
 
+	dr.mu.Lock()
 	dr.records = append(dr.records, record)
+	dr.mu.Unlock()
 }
 
 // Records returns all captured records
 func (dr *DiffRecorder) Records() []DiffRecord {
+	dr.mu.Lock()
+	defer dr.mu.Unlock()
 	return dr.records
 }
 
 // Clear removes all captured records
 func (dr *DiffRecorder) Clear() {
+	dr.mu.Lock()
+	defer dr.mu.Unlock()
 	dr.records = dr.records[:0]
 }
 
 // Drain returns all records and clears the buffer
 func (dr *DiffRecorder) Drain() []DiffRecord {
+	dr.mu.Lock()
+	defer dr.mu.Unlock()
 	records := dr.records
 	dr.records = nil
 	return records
@@ -247,15 +257,8 @@ func (ei *ExternalInjector[T, A, ID]) Source() string {
 //	saveToDatabase(records)
 func RecordingHooks[T Trackable, ID comparable](recorder *DiffRecorder) SessionHooks[T, ID] {
 	return SessionHooks[T, ID]{
-		OnAfterBroadcast: func(diffs map[ID][]byte, seq uint64) {
-			// Capture the base diff (we need to get it from one client or encode separately)
-			// For simplicity, we record the first non-nil diff
-			for _, data := range diffs {
-				if len(data) > 0 {
-					recorder.Record(seq, data, nil, 0)
-					break
-				}
-			}
+		OnAfterBroadcast: func(diffs map[ID][]byte, baseDiff []byte, seq uint64) {
+			recorder.Record(seq, baseDiff, nil, 0)
 		},
 	}
 }

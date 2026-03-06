@@ -169,6 +169,34 @@ func TestEventEmptyBatch(t *testing.T) {
 	}
 }
 
+// S5: Test that DecodeEvent returns a payload that is independent of the input buffer
+func TestDecodeEvent_PayloadBufferIsolation(t *testing.T) {
+	event := Event{
+		Type:    "Test",
+		Payload: []byte("original"),
+	}
+
+	encoded := EncodeEvent(event)
+
+	decoded, err := DecodeEvent(encoded)
+	if err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+
+	if string(decoded.Payload) != "original" {
+		t.Fatalf("payload mismatch: got %q", decoded.Payload)
+	}
+
+	// Overwrite the encoded buffer — decoded payload should be unaffected
+	for i := range encoded {
+		encoded[i] = 0xFF
+	}
+
+	if string(decoded.Payload) != "original" {
+		t.Errorf("payload corrupted after buffer modification: got %q, want %q", decoded.Payload, "original")
+	}
+}
+
 func TestEventDecodeInvalid(t *testing.T) {
 	// Invalid message type
 	_, err := DecodeEvent([]byte{0xFF, 0x00})

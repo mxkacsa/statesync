@@ -230,7 +230,8 @@ func DecodeEvent(data []byte) (Event, error) {
 	if pos+int(payloadLen) > len(data) {
 		return Event{}, ErrInvalidEventFormat
 	}
-	payload := data[pos : pos+int(payloadLen)]
+	payload := make([]byte, payloadLen)
+	copy(payload, data[pos:pos+int(payloadLen)])
 
 	return Event{Type: eventType, Payload: payload}, nil
 }

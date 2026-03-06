@@ -1387,3 +1387,222 @@ func TestInferFieldTypeFunc(t *testing.T) {
 		})
 	}
 }
+
+// S1: Test that OpAdd inserts correctly in the middle of an array (not just append)
+func TestApplyArrayChanges_OpAddMiddle(t *testing.T) {
+	// Start with [10, 20, 30] and insert 15 at index 1
+	arr := []interface{}{int32(10), int32(20), int32(30)}
+	changes := []DecodedArrayChange{
+		{Index: 1, Op: OpAdd, Value: int32(15)},
+	}
+	result := applyArrayChanges(arr, changes)
+
+	expected := []interface{}{int32(10), int32(15), int32(20), int32(30)}
+	if len(result) != 4 {
+		t.Fatalf("expected 4 elements, got %d", len(result))
+	}
+	for i, v := range expected {
+		if result[i] != v {
+			t.Errorf("index %d: expected %v, got %v", i, v, result[i])
+		}
+	}
+}
+
+// S1: Test OpAdd at beginning
+func TestApplyArrayChanges_OpAddBeginning(t *testing.T) {
+	arr := []interface{}{int32(1), int32(2)}
+	changes := []DecodedArrayChange{
+		{Index: 0, Op: OpAdd, Value: int32(0)},
+	}
+	result := applyArrayChanges(arr, changes)
+
+	if len(result) != 3 {
+		t.Fatalf("expected 3 elements, got %d", len(result))
+	}
+	if result[0] != int32(0) {
+		t.Errorf("expected first element 0, got %v", result[0])
+	}
+	if result[1] != int32(1) {
+		t.Errorf("expected second element 1, got %v", result[1])
+	}
+}
+
+// S1: Test OpAdd with pre-allocated capacity (the original bug scenario)
+func TestApplyArrayChanges_OpAddWithCapacity(t *testing.T) {
+	// Create array with extra capacity to trigger in-place append behavior
+	backing := make([]interface{}, 3, 8)
+	backing[0] = "a"
+	backing[1] = "b"
+	backing[2] = "c"
+
+	changes := []DecodedArrayChange{
+		{Index: 1, Op: OpAdd, Value: "X"},
+	}
+	result := applyArrayChanges(backing, changes)
+
+	if len(result) != 4 {
+		t.Fatalf("expected 4 elements, got %d", len(result))
+	}
+	expected := []interface{}{"a", "X", "b", "c"}
+	for i, v := range expected {
+		if result[i] != v {
+			t.Errorf("index %d: expected %v, got %v", i, v, result[i])
+		}
+	}
+}
+
+// S2: Test OpMove with OldIndex < Index (index correction after removal)
+func TestApplyArrayChanges_OpMoveForward(t *testing.T) {
+	// [a, b, c, d] — move index 0 to index 3
+	arr := []interface{}{"a", "b", "c", "d"}
+	changes := []DecodedArrayChange{
+		{OldIndex: 0, Index: 3, Op: OpMove},
+	}
+	result := applyArrayChanges(arr, changes)
+
+	// After removing "a": [b, c, d], insert at 3-1=2: [b, c, a, d]
+	// Wait: insertIdx = 3, OldIndex=0 < Index=3, so insertIdx = 2
+	// [b, c, d] insert "a" at 2: [b, c, a, d]
+	expected := []interface{}{"b", "c", "a", "d"}
+	if len(result) != 4 {
+		t.Fatalf("expected 4 elements, got %d", len(result))
+	}
+	for i, v := range expected {
+		if result[i] != v {
+			t.Errorf("index %d: expected %v, got %v", i, v, result[i])
+		}
+	}
+}
+
+// S2: Test OpMove backward (OldIndex > Index, no correction needed)
+func TestApplyArrayChanges_OpMoveBackward(t *testing.T) {
+	// [a, b, c, d] — move index 3 to index 0
+	arr := []interface{}{"a", "b", "c", "d"}
+	changes := []DecodedArrayChange{
+		{OldIndex: 3, Index: 0, Op: OpMove},
+	}
+	result := applyArrayChanges(arr, changes)
+
+	// After removing "d": [a, b, c], insertIdx=0 (OldIndex=3 > Index=0, no correction)
+	// Insert "d" at 0: [d, a, b, c]
+	expected := []interface{}{"d", "a", "b", "c"}
+	if len(result) != 4 {
+		t.Fatalf("expected 4 elements, got %d", len(result))
+	}
+	for i, v := range expected {
+		if result[i] != v {
+			t.Errorf("index %d: expected %v, got %v", i, v, result[i])
+		}
+	}
+}
+
+// S2: Test OpMove to end (past array length after removal)
+func TestApplyArrayChanges_OpMoveToEnd(t *testing.T) {
+	// [a, b, c] — move index 0 to index 3 (appends)
+	arr := []interface{}{"a", "b", "c"}
+	changes := []DecodedArrayChange{
+		{OldIndex: 0, Index: 3, Op: OpMove},
+	}
+	result := applyArrayChanges(arr, changes)
+
+	// After removing "a": [b, c], insertIdx=3-1=2, which >= len(arr)=2, so append
+	// [b, c, a]
+	expected := []interface{}{"b", "c", "a"}
+	if len(result) != 3 {
+		t.Fatalf("expected 3 elements, got %d", len(result))
+	}
+	for i, v := range expected {
+		if result[i] != v {
+			t.Errorf("index %d: expected %v, got %v", i, v, result[i])
+		}
+	}
+}
+
+// S3: Test MarkAll with maxIndex=255 (uint8 wraparound)
+func TestMarkAll_MaxIndex255(t *testing.T) {
+	cs := NewChangeSet()
+
+	// This would infinite loop with the old uint8 loop variable
+	cs.MarkAll(255)
+
+	// Verify all 256 fields are marked
+	for i := 0; i < 256; i++ {
+		if !cs.IsFieldDirty(uint8(i)) {
+			t.Errorf("field %d should be dirty", i)
+		}
+	}
+
+	fields := cs.ChangedFields()
+	if len(fields) != 256 {
+		t.Errorf("expected 256 changed fields, got %d", len(fields))
+	}
+}
+
+// S4: Test TypeTimestamp in slow-path encoder/decoder
+func TestTimestampSlowPath(t *testing.T) {
+	registry := NewSchemaRegistry()
+	schema := &Schema{
+		ID:   150,
+		Name: "TimestampTest",
+		Fields: []FieldMeta{
+			{Index: 0, Name: "created", Type: TypeTimestamp},
+		},
+	}
+	registry.Register(schema)
+
+	// Create a trackable state with timestamp
+	state := &timestampTestState{
+		changes:   NewChangeSet(),
+		createdMs: 1709721600000, // Unix millis
+	}
+	state.changes.MarkAll(0)
+
+	encoder := NewEncoder(registry)
+	data := encoder.EncodeAll(state)
+
+	if len(data) == 0 {
+		t.Fatal("encoded data is empty")
+	}
+
+	decoder := NewDecoder(registry)
+	patch, err := decoder.Decode(data)
+	if err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+
+	if len(patch.Changes) != 1 {
+		t.Fatalf("expected 1 change, got %d", len(patch.Changes))
+	}
+
+	val, ok := patch.Changes[0].Value.(int64)
+	if !ok {
+		t.Fatalf("expected int64, got %T", patch.Changes[0].Value)
+	}
+	if val != 1709721600000 {
+		t.Errorf("expected 1709721600000, got %d", val)
+	}
+}
+
+type timestampTestState struct {
+	changes   *ChangeSet
+	createdMs int64
+}
+
+func (s *timestampTestState) Schema() *Schema {
+	return &Schema{
+		ID:   150,
+		Name: "TimestampTest",
+		Fields: []FieldMeta{
+			{Index: 0, Name: "created", Type: TypeTimestamp},
+		},
+	}
+}
+func (s *timestampTestState) Changes() *ChangeSet { return s.changes }
+func (s *timestampTestState) ClearChanges()       { s.changes.Clear() }
+func (s *timestampTestState) MarkAllDirty()       { s.changes.MarkAll(0) }
+func (s *timestampTestState) GetFieldValue(index uint8) interface{} {
+	if index == 0 {
+		return s.createdMs
+	}
+	return nil
+}

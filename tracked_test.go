@@ -735,7 +735,7 @@ func TestTrackedSessionHooks(t *testing.T) {
 			beforeBroadcastCalled = true
 			return diffs
 		},
-		OnAfterBroadcast: func(diffs map[string][]byte, seq uint64) {
+		OnAfterBroadcast: func(diffs map[string][]byte, baseDiff []byte, seq uint64) {
 			afterBroadcastCalled = true
 			afterBroadcastSeq = seq
 		},
@@ -982,5 +982,39 @@ func BenchmarkNewTrackedDiffLargeState(b *testing.B) {
 		state.SetRound(i) // Only change one field
 		encoder.Encode(state)
 		state.ClearChanges()
+	}
+}
+
+// S8: Test that TickWithSeq returns consistent sequence numbers matching TickWithEvents
+func TestTickWithSeq_Consistency(t *testing.T) {
+	state := NewTestGameState()
+	tracked := NewTrackedState[*TestGameState, string](state, nil)
+	session := NewTrackedSession[*TestGameState, string, string](tracked)
+	session.Connect("c1", nil)
+
+	// First tick
+	state.SetRound(1)
+	diffs1, seq1 := session.TickWithSeq()
+	if len(diffs1) == 0 {
+		t.Fatal("expected diffs from first tick")
+	}
+
+	// Second tick
+	state.SetRound(2)
+	diffs2, seq2 := session.TickWithSeq()
+	if len(diffs2) == 0 {
+		t.Fatal("expected diffs from second tick")
+	}
+
+	// Sequences should be monotonically increasing
+	if seq2 <= seq1 {
+		t.Errorf("expected seq2 > seq1, got seq1=%d, seq2=%d", seq1, seq2)
+	}
+
+	// TickWithEvents should return same seq for same tick
+	state.SetRound(3)
+	result := session.TickWithEvents()
+	if result.Seq <= seq2 {
+		t.Errorf("expected TickWithEvents seq > seq2, got result.Seq=%d, seq2=%d", result.Seq, seq2)
 	}
 }

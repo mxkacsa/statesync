@@ -34,8 +34,8 @@ type SessionHooks[T Trackable, ID comparable] struct {
 	OnBeforeBroadcast func(diffs map[ID][]byte) map[ID][]byte
 
 	// OnAfterBroadcast is called after broadcast completes
-	// Receives: final map sent to clients, sequence number
-	OnAfterBroadcast func(diffs map[ID][]byte, seq uint64)
+	// Receives: per-client diffs, unfiltered base diff, sequence number
+	OnAfterBroadcast func(diffs map[ID][]byte, baseDiff []byte, seq uint64)
 }
 
 // TrackedSession manages multiple clients with binary state sync
@@ -60,6 +60,7 @@ type TrackedSession[T Trackable, A any, ID comparable] struct {
 	broadcastMu   sync.Mutex // Prevents concurrent Tick() calls from debounce
 	debounce      time.Duration
 	debounceTimer *time.Timer
+	debounceGen   uint64
 	onBroadcast   func(map[ID][]byte)
 
 	// Pipeline hooks
@@ -369,7 +370,7 @@ func (s *TrackedSession[T, A, ID]) Tick() map[ID][]byte {
 	hooks := s.hooks
 	s.mu.RUnlock()
 
-	if storeHistory {
+	if storeHistory || hooks.OnAfterBroadcast != nil {
 		baseDiff = s.state.Encode() // Get diff without filter
 	}
 
@@ -408,7 +409,7 @@ func (s *TrackedSession[T, A, ID]) Tick() map[ID][]byte {
 
 	// Hook: after broadcast
 	if hooks.OnAfterBroadcast != nil {
-		hooks.OnAfterBroadcast(diffs, currentSeq)
+		hooks.OnAfterBroadcast(diffs, baseDiff, currentSeq)
 	}
 
 	return diffs
@@ -417,11 +418,12 @@ func (s *TrackedSession[T, A, ID]) Tick() map[ID][]byte {
 // TickWithSeq performs Tick and returns both diffs and the sequence number.
 // The returned sequence should be sent to clients so they can acknowledge receipt.
 func (s *TrackedSession[T, A, ID]) TickWithSeq() (map[ID][]byte, uint64) {
+	diffs := s.Tick()
+
 	s.mu.RLock()
-	seq := s.seq
+	seq := s.seq - 1 // Tick incremented it, we want the seq for this tick
 	s.mu.RUnlock()
 
-	diffs := s.Tick()
 	return diffs, seq
 }
 
@@ -554,9 +556,15 @@ func (s *TrackedSession[T, A, ID]) ScheduleBroadcast() {
 		s.debounceTimer.Stop()
 	}
 
-	// Schedule new broadcast
+	// Schedule new broadcast with generation counter to skip stale timers
+	s.debounceGen++
+	gen := s.debounceGen
 	s.debounceTimer = time.AfterFunc(s.debounce, func() {
 		s.debounceMu.Lock()
+		if s.debounceGen != gen {
+			s.debounceMu.Unlock()
+			return
+		}
 		callback := s.onBroadcast
 		s.debounceMu.Unlock()
 

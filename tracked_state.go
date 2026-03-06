@@ -264,6 +264,10 @@ func (s *TrackedState[T, A]) CleanupExpired() int {
 		}
 		active = append(active, e)
 	}
+	// Clear tail to allow GC of removed effects
+	for i := len(active); i < len(s.effects); i++ {
+		s.effects[i] = nil
+	}
 	s.effects = active
 
 	return removed

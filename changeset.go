@@ -122,6 +122,8 @@ func (cs *ChangeSet) GetFieldChange(fieldIndex uint8) FieldChange {
 
 // IsFieldDirty returns true if the field has been changed (fast bitset check)
 func (cs *ChangeSet) IsFieldDirty(fieldIndex uint8) bool {
+	cs.mu.RLock()
+	defer cs.mu.RUnlock()
 	return cs.dirty[fieldIndex/64]&(1<<(fieldIndex%64)) != 0
 }
 
@@ -156,9 +158,10 @@ func (cs *ChangeSet) Clear() {
 func (cs *ChangeSet) MarkAll(maxIndex uint8) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
-	for i := uint8(0); i <= maxIndex; i++ {
-		cs.dirty[i/64] |= 1 << (i % 64)
-		cs.ops[i] = FieldChange{Op: OpReplace}
+	for i := 0; i <= int(maxIndex); i++ {
+		idx := uint8(i)
+		cs.dirty[idx/64] |= 1 << (idx % 64)
+		cs.ops[idx] = FieldChange{Op: OpReplace}
 	}
 }
 

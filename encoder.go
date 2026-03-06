@@ -220,6 +220,8 @@ func (e *Encoder) encodeField(field *FieldMeta, value interface{}) {
 		e.writeVarInt(toInt64(value))
 	case TypeVarUint:
 		e.writeVarUint(toUint64(value))
+	case TypeTimestamp:
+		e.writeInt64(toInt64(value))
 	case TypeStruct:
 		if t, ok := value.(Trackable); ok {
 			e.encodeStruct(t, field.ChildSchema)

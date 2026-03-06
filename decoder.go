@@ -270,6 +270,8 @@ func (d *Decoder) decodeField(field *FieldMeta) (interface{}, error) {
 		return d.readVarInt()
 	case TypeVarUint:
 		return d.readVarUint()
+	case TypeTimestamp:
+		return d.readInt64()
 	case TypeStruct:
 		return d.decodeStruct(field.ChildSchema)
 	case TypeArray:
@@ -655,7 +657,8 @@ func applyArrayChanges(arr []interface{}, changes []DecodedArrayChange) []interf
 			if change.Index >= len(arr) {
 				arr = append(arr, change.Value)
 			} else {
-				arr = append(arr[:change.Index+1], arr[change.Index:]...)
+				arr = append(arr, nil)
+				copy(arr[change.Index+1:], arr[change.Index:])
 				arr[change.Index] = change.Value
 			}
 		case OpReplace:
@@ -667,10 +670,20 @@ func applyArrayChanges(arr []interface{}, changes []DecodedArrayChange) []interf
 				arr = append(arr[:change.Index], arr[change.Index+1:]...)
 			}
 		case OpMove:
-			if change.OldIndex < len(arr) && change.Index < len(arr) {
+			if change.OldIndex < len(arr) {
 				elem := arr[change.OldIndex]
 				arr = append(arr[:change.OldIndex], arr[change.OldIndex+1:]...)
-				arr = append(arr[:change.Index], append([]interface{}{elem}, arr[change.Index:]...)...)
+				insertIdx := change.Index
+				if change.OldIndex < change.Index {
+					insertIdx--
+				}
+				if insertIdx >= len(arr) {
+					arr = append(arr, elem)
+				} else {
+					arr = append(arr, nil)
+					copy(arr[insertIdx+1:], arr[insertIdx:])
+					arr[insertIdx] = elem
+				}
 			}
 		}
 	}
