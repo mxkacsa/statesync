@@ -67,7 +67,7 @@ func (eb *EventBuffer[ID]) Add(event PendingEvent[ID]) {
 }
 
 // Drain returns all pending events and clears the buffer.
-// Uses swap buffer to minimize allocations.
+// The returned slice is a copy safe for concurrent iteration.
 func (eb *EventBuffer[ID]) Drain() []PendingEvent[ID] {
 	// Fast path: check atomic counter first (no lock)
 	if eb.count.Load() == 0 {
@@ -81,18 +81,9 @@ func (eb *EventBuffer[ID]) Drain() []PendingEvent[ID] {
 		return nil
 	}
 
-	// Copy events to a new slice to avoid backing-array aliasing.
-	// The caller must be able to iterate the returned slice safely
-	// even if Add() is called concurrently.
 	result := make([]PendingEvent[ID], len(eb.events))
 	copy(result, eb.events)
-	// Zero out retained elements to allow GC of payload/slice references
-	var zero PendingEvent[ID]
-	for i := range eb.events {
-		eb.events[i] = zero
-	}
-	eb.events = eb.events[:0]
-	eb.count.Store(0)
+	eb.resetLocked()
 	return result
 }
 
@@ -109,14 +100,18 @@ func (eb *EventBuffer[ID]) HasEvents() bool {
 // Clear removes all pending events without returning them
 func (eb *EventBuffer[ID]) Clear() {
 	eb.mu.Lock()
-	// Zero out retained elements to allow GC of payload/slice references
+	eb.resetLocked()
+	eb.mu.Unlock()
+}
+
+// resetLocked zeroes out the buffer and resets the counter. Caller must hold mu.
+func (eb *EventBuffer[ID]) resetLocked() {
 	var zero PendingEvent[ID]
 	for i := range eb.events {
 		eb.events[i] = zero
 	}
 	eb.events = eb.events[:0]
 	eb.count.Store(0)
-	eb.mu.Unlock()
 }
 
 // EventEmitter is the interface for emitting events

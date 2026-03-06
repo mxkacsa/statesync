@@ -114,7 +114,7 @@ func (cs *ChangeSet) MarkWithIndex(fieldIndex uint8, op Operation, oldIdx, newId
 func (cs *ChangeSet) GetFieldChange(fieldIndex uint8) FieldChange {
 	cs.mu.RLock()
 	defer cs.mu.RUnlock()
-	if cs.dirty[fieldIndex/64]&(1<<(fieldIndex%64)) != 0 {
+	if cs.isDirty(fieldIndex) {
 		return cs.ops[fieldIndex]
 	}
 	return FieldChange{Op: OpNone}
@@ -124,7 +124,7 @@ func (cs *ChangeSet) GetFieldChange(fieldIndex uint8) FieldChange {
 func (cs *ChangeSet) IsFieldDirty(fieldIndex uint8) bool {
 	cs.mu.RLock()
 	defer cs.mu.RUnlock()
-	return cs.dirty[fieldIndex/64]&(1<<(fieldIndex%64)) != 0
+	return cs.isDirty(fieldIndex)
 }
 
 // HasChanges returns true if any fields have changed
@@ -256,66 +256,48 @@ func (cs *ChangeSet) ChangedFields() []uint8 {
 
 // changedFieldsLocked returns changed fields without locking (caller must hold lock)
 func (cs *ChangeSet) changedFieldsLocked() []uint8 {
-	// Count bits to pre-allocate exact size
-	count := 0
-	for i := 0; i < 4; i++ {
-		count += popcount(cs.dirty[i])
-	}
-	// Add children, arrays, maps that might not have dirty bit set
-	for idx := range cs.children {
-		if cs.dirty[idx/64]&(1<<(idx%64)) == 0 {
-			count++
-		}
-	}
-	for idx, arr := range cs.arrays {
-		if cs.dirty[idx/64]&(1<<(idx%64)) == 0 && arr.HasChanges() {
-			count++
-		}
-	}
-	for idx, m := range cs.maps {
-		if cs.dirty[idx/64]&(1<<(idx%64)) == 0 && m.HasChanges() {
-			count++
-		}
-	}
-
-	if count == 0 {
+	// Count dirty bits for pre-allocation
+	count := popcount(cs.dirty[0]) + popcount(cs.dirty[1]) + popcount(cs.dirty[2]) + popcount(cs.dirty[3])
+	if count == 0 && len(cs.children) == 0 && len(cs.arrays) == 0 && len(cs.maps) == 0 {
 		return nil
 	}
 
-	// Pre-allocate result slice
 	result := make([]uint8, 0, count)
 
-	// Extract set bits from bitset (already in sorted order!)
+	// Extract set bits from bitset (already in sorted order)
 	for i := 0; i < 4; i++ {
-		bits := cs.dirty[i]
+		w := cs.dirty[i]
 		base := uint8(i * 64)
-		for bits != 0 {
-			// Find lowest set bit
-			tz := trailingZeros64(bits)
+		for w != 0 {
+			tz := trailingZeros64(w)
 			result = append(result, base+uint8(tz))
-			// Clear that bit
-			bits &= bits - 1
+			w &= w - 1
 		}
 	}
 
-	// Add any children/arrays/maps not in dirty bitset
+	// Add any children/arrays/maps whose parent dirty bit is not set
 	for idx := range cs.children {
-		if cs.dirty[idx/64]&(1<<(idx%64)) == 0 {
+		if !cs.isDirty(idx) {
 			result = append(result, idx)
 		}
 	}
 	for idx, arr := range cs.arrays {
-		if cs.dirty[idx/64]&(1<<(idx%64)) == 0 && arr.HasChanges() {
+		if !cs.isDirty(idx) && arr.HasChanges() {
 			result = append(result, idx)
 		}
 	}
 	for idx, m := range cs.maps {
-		if cs.dirty[idx/64]&(1<<(idx%64)) == 0 && m.HasChanges() {
+		if !cs.isDirty(idx) && m.HasChanges() {
 			result = append(result, idx)
 		}
 	}
 
 	return result
+}
+
+// isDirty checks if a field's dirty bit is set (caller must hold lock)
+func (cs *ChangeSet) isDirty(idx uint8) bool {
+	return cs.dirty[idx/64]&(1<<(idx%64)) != 0
 }
 
 // popcount returns the number of set bits in x (uses hardware POPCNT instruction)

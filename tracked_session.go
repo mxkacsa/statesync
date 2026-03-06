@@ -270,8 +270,8 @@ func (s *TrackedSession[T, A, ID]) Broadcast() map[ID][]byte {
 	needsFullMap := make(map[ID]bool, len(s.clients))
 	for id, filter := range s.clients {
 		clients[id] = filter
-		needsFullMap[id] = s.clientNeedsFull[id]
 		if s.clientNeedsFull[id] {
+			needsFullMap[id] = true
 			s.clientNeedsFull[id] = false
 		}
 	}
@@ -370,9 +370,8 @@ func (s *TrackedSession[T, A, ID]) Tick() map[ID][]byte {
 	return diffs
 }
 
-// tickInternal performs the actual tick and returns both diffs and the sequence number.
-// This avoids the race where TickWithSeq/TickWithEvents re-read s.seq after Tick()
-// returns — a concurrent Tick() could increment s.seq between the two reads.
+// tickInternal performs the actual tick and returns both diffs and the sequence number
+// atomically, preventing concurrent Tick() calls from causing seq mismatches.
 func (s *TrackedSession[T, A, ID]) tickInternal() (map[ID][]byte, uint64) {
 	diffs := s.Broadcast()
 
@@ -492,33 +491,31 @@ func (s *TrackedSession[T, A, ID]) getPendingSince(id ID, sinceSeq uint64, clien
 // Returns the data to send and whether it's a full state (true) or incremental updates (false).
 // If updates is nil, there's nothing to send (client is up to date).
 func (s *TrackedSession[T, A, ID]) Reconnect(id ID, lastSeq uint64, filter FilterFunc[T]) (updates [][]byte, isFull bool) {
-	// Try to get incremental updates from history
-	// Use getPendingSince with the filter directly — the client isn't in s.clients yet
+	// Try to get incremental updates from history.
+	// Use getPendingSince with the filter directly -- the client isn't in s.clients yet.
 	s.mu.RLock()
 	pending, ok := s.getPendingSince(id, lastSeq, filter)
-	capturedSeq := s.seq - 1 // T7: capture seq under RLock to avoid TOCTOU
+	capturedSeq := s.seq - 1
 	s.mu.RUnlock()
-	if ok && len(pending) > 0 {
-		// Can resume with incremental updates
-		s.mu.Lock()
-		s.clients[id] = filter
-		s.clientNeedsFull[id] = false
-		s.clientSeq[id] = lastSeq
-		s.mu.Unlock()
-		return pending, false
-	}
 
-	if ok && len(pending) == 0 {
-		// Client is up to date, just reconnect
+	if ok {
+		// History covers the gap (or client is already up to date).
 		s.mu.Lock()
 		s.clients[id] = filter
 		s.clientNeedsFull[id] = false
-		s.clientSeq[id] = capturedSeq // T7: use captured seq, not current
+		if len(pending) > 0 {
+			s.clientSeq[id] = lastSeq
+		} else {
+			s.clientSeq[id] = capturedSeq
+		}
 		s.mu.Unlock()
+		if len(pending) > 0 {
+			return pending, false
+		}
 		return nil, false
 	}
 
-	// Need full state sync — register client with needsFull=true so that
+	// Need full state sync -- register client with needsFull=true so that
 	// if a concurrent Broadcast() picks it up before Full() returns,
 	// it sends another full state (idempotent) rather than an orphaned patch.
 	s.mu.Lock()
@@ -528,14 +525,12 @@ func (s *TrackedSession[T, A, ID]) Reconnect(id ID, lastSeq uint64, filter Filte
 	s.mu.Unlock()
 
 	fullData := s.Full(id)
-	if fullData == nil { // T5: nil Full() → don't wrap in slice
+	if fullData == nil {
 		return nil, false
 	}
 
-	// Update clientSeq and clear needsFull flag after Full() completes.
-	// The flag was set to true before Full() to protect against concurrent
-	// Broadcast sending an orphaned patch; now that full state is captured,
-	// clear it so the next Tick sends a normal diff instead of another full state.
+	// Clear needsFull now that full state is captured, so the next Tick
+	// sends a normal diff instead of another full state.
 	s.mu.Lock()
 	s.clientNeedsFull[id] = false
 	s.clientSeq[id] = s.seq - 1
@@ -565,20 +560,10 @@ func (s *TrackedSession[T, A, ID]) ScheduleBroadcast() {
 	s.debounceMu.Lock()
 
 	if s.debounce == 0 {
-		// No debounce, broadcast immediately
-		// Get callback and release lock before calling Tick/callback
-		// to avoid holding lock during potentially long operations
+		// No debounce -- get callback and release lock before broadcasting
 		callback := s.onBroadcast
 		s.debounceMu.Unlock()
-
-		// Always call Tick() to commit changes and advance seq,
-		// even if no callback is set — otherwise changes accumulate indefinitely.
-		s.broadcastMu.Lock()
-		diffs := s.Tick()
-		if callback != nil && len(diffs) > 0 {
-			callback(diffs)
-		}
-		s.broadcastMu.Unlock()
+		s.tickAndNotify(callback)
 		return
 	}
 
@@ -598,17 +583,19 @@ func (s *TrackedSession[T, A, ID]) ScheduleBroadcast() {
 		}
 		callback := s.onBroadcast
 		s.debounceMu.Unlock()
-
-		// Always call Tick() to commit changes and advance seq,
-		// even if no callback is set — otherwise changes accumulate indefinitely.
-		s.broadcastMu.Lock()
-		diffs := s.Tick()
-		if callback != nil && len(diffs) > 0 {
-			callback(diffs)
-		}
-		s.broadcastMu.Unlock()
+		s.tickAndNotify(callback)
 	})
 	s.debounceMu.Unlock()
+}
+
+// tickAndNotify calls Tick() under broadcastMu and invokes the callback if there are diffs.
+func (s *TrackedSession[T, A, ID]) tickAndNotify(callback func(map[ID][]byte)) {
+	s.broadcastMu.Lock()
+	diffs := s.Tick()
+	if callback != nil && len(diffs) > 0 {
+		callback(diffs)
+	}
+	s.broadcastMu.Unlock()
 }
 
 // Transaction-based updates
@@ -827,8 +814,7 @@ func (s *TrackedSession[T, A, ID]) TickWithEvents() TickResult[ID] {
 	// Get state diffs and sequence atomically from tickInternal
 	diffs, seq := s.tickInternal()
 
-	// T6: Always drain events — lock-free HasEvents() check had a race
-	// where events added between HasEvents() and Tick() would be delayed by 1 tick
+	// Always drain events unconditionally to avoid race with concurrent Add()
 	pending := s.events.Drain()
 	if len(pending) == 0 {
 		return TickResult[ID]{Diffs: diffs, Seq: seq}
