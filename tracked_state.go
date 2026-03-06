@@ -125,7 +125,7 @@ func (s *TrackedState[T, A]) EncodeWithFilter(filter func(T) T) []byte {
 	if filter != nil {
 		state = filter(state)
 	}
-	if any(state) == nil || !state.Changes().HasChanges() {
+	if isNilTrackable(state) || !state.Changes().HasChanges() {
 		return nil
 	}
 	s.encoderMu.Lock()
@@ -142,7 +142,7 @@ func (s *TrackedState[T, A]) EncodeAllWithFilter(filter func(T) T) []byte {
 	if filter != nil {
 		state = filter(state)
 	}
-	if any(state) == nil {
+	if isNilTrackable(state) {
 		return nil
 	}
 	s.encoderMu.Lock()

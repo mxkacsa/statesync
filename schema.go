@@ -157,6 +157,18 @@ type Trackable interface {
 	GetFieldValue(index uint8) interface{}
 }
 
+// isNilTrackable checks if a Trackable value is nil, handling typed nil pointers.
+// In Go, any((*T)(nil)) == nil is false because the interface carries type info.
+// This function uses reflect to properly detect nil pointer values.
+func isNilTrackable[T Trackable](state T) bool {
+	v := any(state)
+	if v == nil {
+		return true
+	}
+	rv := reflect.ValueOf(v)
+	return (rv.Kind() == reflect.Ptr || rv.Kind() == reflect.Interface) && rv.IsNil()
+}
+
 // FastEncoder is an optional interface for zero-allocation encoding
 // Generated types should implement this for maximum performance
 type FastEncoder interface {

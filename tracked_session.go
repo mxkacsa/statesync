@@ -218,7 +218,7 @@ func (s *TrackedSession[T, A, ID]) Full(id ID) []byte {
 	}
 
 	// Filter returned nil (e.g., player not found in state)
-	if any(state) == nil {
+	if isNilTrackable(state) {
 		return nil
 	}
 
@@ -308,7 +308,7 @@ func (s *TrackedSession[T, A, ID]) Broadcast() map[ID][]byte {
 		}
 
 		// Skip clients whose filter returned nil (e.g., player not found in state)
-		if any(state) == nil {
+		if isNilTrackable(state) {
 			continue
 		}
 
