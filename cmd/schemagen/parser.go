@@ -113,6 +113,9 @@ func (p *Parser) parseTypeAnnotations(line string) (*TypeAnnotations, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid @id value: %v", err)
 		}
+		if id <= 0 {
+			return nil, fmt.Errorf("@id must be a positive integer, got %d", id)
+		}
 		ann.ID = id
 	}
 

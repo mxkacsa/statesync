@@ -197,6 +197,52 @@ func TestDecodeEvent_PayloadBufferIsolation(t *testing.T) {
 	}
 }
 
+// R3: Test that EventBuffer Drain returns isolated data
+func TestEventBuffer_DrainIsolation(t *testing.T) {
+	buf := NewEventBuffer[string]()
+
+	buf.Add(PendingEvent[string]{
+		Event:  Event{Type: "Event1", Payload: []byte("data1")},
+		Target: TargetAll,
+	})
+
+	drained := buf.Drain()
+	if len(drained) != 1 || drained[0].Event.Type != "Event1" {
+		t.Fatal("unexpected drained result")
+	}
+
+	// Add new event after drain
+	buf.Add(PendingEvent[string]{
+		Event:  Event{Type: "Event2", Payload: []byte("data2")},
+		Target: TargetAll,
+	})
+
+	// The previously drained slice should still have "Event1", not overwritten
+	if drained[0].Event.Type != "Event1" {
+		t.Errorf("drained slice was corrupted: got %q, want %q", drained[0].Event.Type, "Event1")
+	}
+}
+
+// R4: Test that readVarUint errors are caught by DecodeEvent
+func TestDecodeEvent_MalformedVarInt(t *testing.T) {
+	// Create a buffer with MsgEvent header followed by an incomplete varint
+	// (byte with continuation bit set, then truncated)
+	data := []byte{MsgEvent, 0x80} // 0x80 = continuation bit set, no following byte
+	_, err := DecodeEvent(data)
+	if err == nil {
+		t.Error("expected error for malformed varint in DecodeEvent")
+	}
+}
+
+// R4: Test that readVarUint errors are caught by DecodeEventBatch
+func TestDecodeEventBatch_MalformedVarInt(t *testing.T) {
+	data := []byte{MsgEventBatch, 0x80}
+	_, err := DecodeEventBatch(data)
+	if err == nil {
+		t.Error("expected error for malformed varint in DecodeEventBatch")
+	}
+}
+
 func TestEventDecodeInvalid(t *testing.T) {
 	// Invalid message type
 	_, err := DecodeEvent([]byte{0xFF, 0x00})

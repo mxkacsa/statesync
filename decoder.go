@@ -148,6 +148,11 @@ func (d *Decoder) decodePatch() (*DecodedPatch, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Bound check: each change needs at least 2 bytes
+	remaining := len(d.buf) - d.pos
+	if remaining < 0 || changeCount > uint64(remaining) {
+		return nil, ErrBufferTooSmall
+	}
 
 	changes := make([]DecodedChange, changeCount)
 	for i := uint64(0); i < changeCount; i++ {
@@ -318,6 +323,11 @@ func (d *Decoder) decodeArrayFull(field *FieldMeta) ([]interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Bound check: each element needs at least 1 byte
+	remaining := len(d.buf) - d.pos
+	if remaining < 0 || length > uint64(remaining) {
+		return nil, ErrBufferTooSmall
+	}
 
 	result := make([]interface{}, length)
 	for i := uint64(0); i < length; i++ {
@@ -335,6 +345,11 @@ func (d *Decoder) decodeArrayChanges(field *FieldMeta) ([]DecodedArrayChange, er
 	changeCount, err := d.readVarUint()
 	if err != nil {
 		return nil, err
+	}
+	// Bound check: each change needs at least 2 bytes
+	remaining := len(d.buf) - d.pos
+	if remaining < 0 || changeCount > uint64(remaining) {
+		return nil, ErrBufferTooSmall
 	}
 
 	changes := make([]DecodedArrayChange, changeCount)
@@ -390,6 +405,11 @@ func (d *Decoder) decodeMapFull(field *FieldMeta) (map[string]interface{}, error
 	if err != nil {
 		return nil, err
 	}
+	// Bound check: each entry needs at least 2 bytes (key len + value)
+	remaining := len(d.buf) - d.pos
+	if remaining < 0 || length > uint64(remaining) {
+		return nil, ErrBufferTooSmall
+	}
 
 	result := make(map[string]interface{}, length)
 	for i := uint64(0); i < length; i++ {
@@ -417,6 +437,11 @@ func (d *Decoder) decodeMapChanges(field *FieldMeta) ([]DecodedMapChange, error)
 	changeCount, err := d.readVarUint()
 	if err != nil {
 		return nil, err
+	}
+	// Bound check: each change needs at least 2 bytes
+	remaining := len(d.buf) - d.pos
+	if remaining < 0 || changeCount > uint64(remaining) {
+		return nil, ErrBufferTooSmall
 	}
 
 	changes := make([]DecodedMapChange, changeCount)
@@ -556,11 +581,13 @@ func (d *Decoder) readString() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if d.pos+int(length) > len(d.buf) {
+	remaining := len(d.buf) - d.pos
+	if remaining < 0 || length > uint64(remaining) {
 		return "", ErrBufferTooSmall
 	}
-	s := string(d.buf[d.pos : d.pos+int(length)])
-	d.pos += int(length)
+	n := int(length)
+	s := string(d.buf[d.pos : d.pos+n])
+	d.pos += n
 	return s, nil
 }
 
@@ -569,12 +596,14 @@ func (d *Decoder) readBytes() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if d.pos+int(length) > len(d.buf) {
+	remaining := len(d.buf) - d.pos
+	if remaining < 0 || length > uint64(remaining) {
 		return nil, ErrBufferTooSmall
 	}
-	b := make([]byte, length)
-	copy(b, d.buf[d.pos:d.pos+int(length)])
-	d.pos += int(length)
+	n := int(length)
+	b := make([]byte, n)
+	copy(b, d.buf[d.pos:d.pos+n])
+	d.pos += n
 	return b, nil
 }
 

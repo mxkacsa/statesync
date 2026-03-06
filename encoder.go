@@ -42,9 +42,13 @@ func (e *Encoder) Reset() {
 	e.pos = 0
 }
 
-// Bytes returns the encoded bytes
+// Bytes returns a copy of the encoded bytes.
+// Returns a new slice each call to prevent buffer aliasing
+// when the encoder is reused across multiple Encode calls.
 func (e *Encoder) Bytes() []byte {
-	return e.buf[:e.pos]
+	result := make([]byte, e.pos)
+	copy(result, e.buf[:e.pos])
+	return result
 }
 
 // grow ensures buffer has capacity for n more bytes
@@ -121,7 +125,7 @@ func (e *Encoder) EncodeAll(t Trackable) []byte {
 	}
 
 	// SLOW PATH: Use reflection-based encoding
-	// Number of fields
+	// Number of fields (max 256 — field indices are uint8)
 	e.writeByte(uint8(len(schema.Fields)))
 
 	// Encode all fields
@@ -284,8 +288,9 @@ func (e *Encoder) encodeArrayChanges(field *FieldMeta, changes *ArrayChangeSet, 
 
 		switch change.Op {
 		case OpAdd, OpReplace:
-			elem := getArrayElement(value, idx)
-			e.encodeArrayElement(field, elem)
+			// Use the stored change.Value (captured at mutation time),
+			// not the live array — indices may have shifted since recording.
+			e.encodeArrayElement(field, change.Value)
 		case OpMove:
 			e.writeVarUint(uint64(change.OldIndex))
 		}
@@ -297,6 +302,8 @@ func (e *Encoder) encodeArrayElement(field *FieldMeta, elem interface{}) {
 	if field.ElemType == TypeStruct {
 		if t, ok := elem.(Trackable); ok {
 			e.encodeStruct(t, field.ChildSchema)
+		} else {
+			e.writeByte(0) // Null marker for non-Trackable struct
 		}
 	} else {
 		// Primitive element
@@ -348,6 +355,8 @@ func (e *Encoder) encodeMapValue(field *FieldMeta, value interface{}) {
 	if field.ElemType == TypeStruct {
 		if t, ok := value.(Trackable); ok {
 			e.encodeStruct(t, field.ChildSchema)
+		} else {
+			e.writeByte(0) // Null marker for non-Trackable struct
 		}
 	} else {
 		tempField := &FieldMeta{Type: field.ElemType}
@@ -602,12 +611,18 @@ func toFloat32(v interface{}) float32 {
 	if x, ok := v.(float32); ok {
 		return x
 	}
+	if x, ok := v.(float64); ok {
+		return float32(x)
+	}
 	return 0
 }
 
 func toFloat64(v interface{}) float64 {
 	if x, ok := v.(float64); ok {
 		return x
+	}
+	if x, ok := v.(float32); ok {
+		return float64(x)
 	}
 	return 0
 }

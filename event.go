@@ -48,15 +48,13 @@ type PendingEvent[ID comparable] struct {
 type EventBuffer[ID comparable] struct {
 	mu     sync.Mutex
 	events []PendingEvent[ID]
-	swap   []PendingEvent[ID] // Pre-allocated swap buffer
-	count  atomic.Int32       // Lock-free count for HasEvents check
+	count  atomic.Int32 // Lock-free count for HasEvents check
 }
 
 // NewEventBuffer creates a new event buffer
 func NewEventBuffer[ID comparable]() *EventBuffer[ID] {
 	return &EventBuffer[ID]{
 		events: make([]PendingEvent[ID], 0, 8),
-		swap:   make([]PendingEvent[ID], 0, 8),
 	}
 }
 
@@ -83,12 +81,14 @@ func (eb *EventBuffer[ID]) Drain() []PendingEvent[ID] {
 		return nil
 	}
 
-	// Swap buffers instead of allocating
-	events := eb.events
-	eb.events = eb.swap[:0]
-	eb.swap = events[:0] // Will be reused next Drain
+	// Copy events to a new slice to avoid backing-array aliasing.
+	// The caller must be able to iterate the returned slice safely
+	// even if Add() is called concurrently.
+	result := make([]PendingEvent[ID], len(eb.events))
+	copy(result, eb.events)
+	eb.events = eb.events[:0]
 	eb.count.Store(0)
-	return events
+	return result
 }
 
 // Count returns the number of pending events (lock-free)
@@ -217,6 +217,9 @@ func DecodeEvent(data []byte) (Event, error) {
 
 	// Event type
 	typeLen, n := readVarUint(data[pos:])
+	if n == 0 {
+		return Event{}, ErrInvalidEventFormat
+	}
 	pos += n
 	if pos+int(typeLen) > len(data) {
 		return Event{}, ErrInvalidEventFormat
@@ -226,6 +229,9 @@ func DecodeEvent(data []byte) (Event, error) {
 
 	// Payload
 	payloadLen, n := readVarUint(data[pos:])
+	if n == 0 {
+		return Event{}, ErrInvalidEventFormat
+	}
 	pos += n
 	if pos+int(payloadLen) > len(data) {
 		return Event{}, ErrInvalidEventFormat
@@ -258,12 +264,18 @@ func DecodeEventBatch(data []byte) ([]Event, error) {
 
 	pos := 1
 	count, n := readVarUint(data[pos:])
+	if n == 0 {
+		return nil, ErrInvalidEventFormat
+	}
 	pos += n
 
 	events := make([]Event, 0, count)
 	for i := uint64(0); i < count; i++ {
 		// Event type
 		typeLen, n := readVarUint(data[pos:])
+		if n == 0 {
+			return nil, ErrInvalidEventFormat
+		}
 		pos += n
 		if pos+int(typeLen) > len(data) {
 			return nil, ErrInvalidEventFormat
@@ -273,6 +285,9 @@ func DecodeEventBatch(data []byte) ([]Event, error) {
 
 		// Payload
 		payloadLen, n := readVarUint(data[pos:])
+		if n == 0 {
+			return nil, ErrInvalidEventFormat
+		}
 		pos += n
 		if pos+int(payloadLen) > len(data) {
 			return nil, ErrInvalidEventFormat

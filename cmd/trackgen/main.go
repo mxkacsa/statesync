@@ -23,8 +23,9 @@ import (
 )
 
 var (
-	typeNames = flag.String("type", "", "comma-separated list of type names")
-	output    = flag.String("output", "", "output file name; default srcdir/<type>_tracked.go")
+	typeNames  = flag.String("type", "", "comma-separated list of type names")
+	output     = flag.String("output", "", "output file name; default srcdir/<type>_tracked.go")
+	modulePath = flag.String("module", "github.com/mxkacsa/statesync", "statesync module import path")
 )
 
 func main() {
@@ -339,19 +340,43 @@ func containsString(slice []string, s string) bool {
 	return false
 }
 
+// upperFirst capitalizes the first character of a string (replaces deprecated strings.Title)
+func upperFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+// isPrimitiveField returns true if the field type is a simple comparable primitive
+func isPrimitiveField(fi FieldInfo) bool {
+	if fi.IsPointer || fi.IsSlice || fi.IsMap {
+		return false
+	}
+	switch fi.Type {
+	case "int8", "int16", "int32", "int", "int64",
+		"uint8", "uint16", "uint32", "uint", "uint64",
+		"float32", "float64", "string", "bool", "byte":
+		return true
+	}
+	return false
+}
+
 func (g *Generator) generate(buf *bytes.Buffer, types []string) error {
 	tmpl, err := template.New("tracked").Funcs(template.FuncMap{
-		"lower":           strings.ToLower,
-		"title":           strings.Title,
-		"goFieldType":     goFieldType,
-		"schemaType":      schemaType,
-		"needsChildType":  needsChildType,
-		"isTrackable":     func(t string) bool { return g.types[t] != nil },
-		"hasVisibility":   func(t *TypeInfo) bool { return t.HasVisibility },
-		"isBuiltinVis":    isBuiltinVisibility,
-		"zeroValue":       zeroValue,
-		"visibilityCheck": visibilityCheck,
-		"needsCloneField": needsCloneField,
+		"lower":            strings.ToLower,
+		"title":            upperFirst,
+		"goFieldType":      goFieldType,
+		"schemaType":       schemaType,
+		"needsChildType":   needsChildType,
+		"isPrimitiveField": isPrimitiveField,
+		"isTrackable":      func(t string) bool { return g.types[t] != nil },
+		"hasVisibility":    func(t *TypeInfo) bool { return t.HasVisibility },
+		"isBuiltinVis":     isBuiltinVisibility,
+		"zeroValue":        zeroValue,
+		"visibilityCheck":  visibilityCheck,
+		"needsCloneField":  needsCloneField,
+		"sub":              func(a, b int) int { return a - b },
 	}).Parse(trackedTemplate)
 	if err != nil {
 		return err
@@ -359,9 +384,11 @@ func (g *Generator) generate(buf *bytes.Buffer, types []string) error {
 
 	data := struct {
 		Package string
+		Module  string
 		Types   []*TypeInfo
 	}{
 		Package: g.pkg,
+		Module:  *modulePath,
 		Types:   make([]*TypeInfo, 0, len(types)),
 	}
 
@@ -493,7 +520,7 @@ func visibilityCheck(fi FieldInfo, ownerExpr string) string {
 		return "true"
 	default:
 		// Custom predicate
-		return "ctx." + strings.Title(fi.Visibility) + " != nil && ctx." + strings.Title(fi.Visibility) + "(ctx.ViewerID)"
+		return "ctx." + upperFirst(fi.Visibility) + " != nil && ctx." + upperFirst(fi.Visibility) + "(ctx.ViewerID)"
 	}
 }
 
@@ -509,7 +536,7 @@ package {{.Package}}
 import (
 	"sync"
 
-	"statediff"
+	statediff "{{.Module}}"
 )
 
 {{range .Types}}
@@ -574,7 +601,7 @@ func (t *Tracked{{.Name}}) ClearChanges() {
 
 // MarkAllDirty implements Trackable
 func (t *Tracked{{.Name}}) MarkAllDirty() {
-	t.changes.MarkAll({{len .Fields | printf "%d"}})
+	{{if gt (len .Fields) 0}}t.changes.MarkAll({{sub (len .Fields) 1}}){{end}}
 }
 
 // GetFieldValue implements Trackable
@@ -604,10 +631,12 @@ func (t *Tracked{{$type.Name}}) {{.Name}}() {{goFieldType .}} {
 func (t *Tracked{{$type.Name}}) Set{{.Name}}(v {{goFieldType .}}) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.data.{{.Name}} != v {
+	{{if isPrimitiveField .}}if t.data.{{.Name}} != v {
 		t.data.{{.Name}} = v
 		t.changes.Mark({{.Index}}, statediff.OpReplace)
-	}
+	}{{else}}t.data.{{.Name}} = v
+	t.changes.Mark({{.Index}}, statediff.OpReplace)
+	{{end}}
 }
 {{end}}{{end}}
 
@@ -671,11 +700,16 @@ func (t *Tracked{{$type.Name}}) Set{{.Name}}Key(key {{.KeyType}}, v {{.ElemType}
 	_, existed := t.data.{{.Name}}[key]
 	t.data.{{.Name}}[key] = v
 	m := t.changes.GetOrCreateMap({{.Index}})
+	{{if needsChildType .}}vp := v
 	if existed {
+		m.MarkReplace(key, &vp)
+	} else {
+		m.MarkAdd(key, &vp)
+	}{{else}}if existed {
 		m.MarkReplace(key, v)
 	} else {
 		m.MarkAdd(key, v)
-	}
+	}{{end}}
 }
 
 // Delete{{.Name}}Key deletes a map key

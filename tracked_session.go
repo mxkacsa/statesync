@@ -435,7 +435,13 @@ func (s *TrackedSession[T, A, ID]) TickWithSeq() (map[ID][]byte, uint64) {
 func (s *TrackedSession[T, A, ID]) GetPendingSince(id ID, sinceSeq uint64) ([][]byte, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return s.getPendingSince(id, sinceSeq, s.clients[id])
+}
 
+// getPendingSince is the internal implementation that accepts an explicit filter.
+// This allows Reconnect to pass the filter before the client is re-added to s.clients.
+// Caller must hold s.mu.RLock or s.mu.Lock.
+func (s *TrackedSession[T, A, ID]) getPendingSince(id ID, sinceSeq uint64, clientFilter FilterFunc[T]) ([][]byte, bool) {
 	// Client is up to date
 	if sinceSeq >= s.seq-1 {
 		return [][]byte{}, true
@@ -455,7 +461,6 @@ func (s *TrackedSession[T, A, ID]) GetPendingSince(id ID, sinceSeq uint64) ([][]
 
 	// Collect all diffs since the requested sequence
 	// Check if client has a filter - if so, we can't safely fall back to unfiltered base diff
-	clientFilter := s.clients[id]
 	var pending [][]byte
 	for _, entry := range s.history {
 		if entry.seq > sinceSeq {
@@ -481,7 +486,11 @@ func (s *TrackedSession[T, A, ID]) GetPendingSince(id ID, sinceSeq uint64) ([][]
 // If updates is nil, there's nothing to send (client is up to date).
 func (s *TrackedSession[T, A, ID]) Reconnect(id ID, lastSeq uint64, filter FilterFunc[T]) (updates [][]byte, isFull bool) {
 	// Try to get incremental updates from history
-	pending, ok := s.GetPendingSince(id, lastSeq)
+	// Use getPendingSince with the filter directly — the client isn't in s.clients yet
+	s.mu.RLock()
+	pending, ok := s.getPendingSince(id, lastSeq, filter)
+	capturedSeq := s.seq - 1 // T7: capture seq under RLock to avoid TOCTOU
+	s.mu.RUnlock()
 	if ok && len(pending) > 0 {
 		// Can resume with incremental updates
 		s.mu.Lock()
@@ -497,7 +506,7 @@ func (s *TrackedSession[T, A, ID]) Reconnect(id ID, lastSeq uint64, filter Filte
 		s.mu.Lock()
 		s.clients[id] = filter
 		s.clientNeedsFull[id] = false
-		s.clientSeq[id] = s.seq - 1
+		s.clientSeq[id] = capturedSeq // T7: use captured seq, not current
 		s.mu.Unlock()
 		return nil, false
 	}
@@ -510,6 +519,9 @@ func (s *TrackedSession[T, A, ID]) Reconnect(id ID, lastSeq uint64, filter Filte
 	s.mu.Unlock()
 
 	fullData := s.Full(id)
+	if fullData == nil { // T5: nil Full() → don't wrap in slice
+		return nil, false
+	}
 	return [][]byte{fullData}, true
 }
 
@@ -793,9 +805,6 @@ type TickResult[ID comparable] struct {
 //	    sendToClient(clientID, events)
 //	}
 func (s *TrackedSession[T, A, ID]) TickWithEvents() TickResult[ID] {
-	// Fast path: check for events first (lock-free)
-	hasEvents := s.events.HasEvents()
-
 	// Get state diffs
 	diffs := s.Tick()
 
@@ -804,11 +813,8 @@ func (s *TrackedSession[T, A, ID]) TickWithEvents() TickResult[ID] {
 	seq := s.seq - 1 // Tick incremented it, we want the seq for this tick
 	s.mu.RUnlock()
 
-	if !hasEvents {
-		return TickResult[ID]{Diffs: diffs, Seq: seq}
-	}
-
-	// Drain events
+	// T6: Always drain events — lock-free HasEvents() check had a race
+	// where events added between HasEvents() and Tick() would be delayed by 1 tick
 	pending := s.events.Drain()
 	if len(pending) == 0 {
 		return TickResult[ID]{Diffs: diffs, Seq: seq}

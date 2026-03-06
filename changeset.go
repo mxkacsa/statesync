@@ -131,8 +131,25 @@ func (cs *ChangeSet) IsFieldDirty(fieldIndex uint8) bool {
 func (cs *ChangeSet) HasChanges() bool {
 	cs.mu.RLock()
 	defer cs.mu.RUnlock()
-	return cs.dirty[0] != 0 || cs.dirty[1] != 0 || cs.dirty[2] != 0 || cs.dirty[3] != 0 ||
-		len(cs.children) > 0 || len(cs.arrays) > 0 || len(cs.maps) > 0
+	if cs.dirty[0] != 0 || cs.dirty[1] != 0 || cs.dirty[2] != 0 || cs.dirty[3] != 0 {
+		return true
+	}
+	for _, child := range cs.children {
+		if child.HasChanges() {
+			return true
+		}
+	}
+	for _, arr := range cs.arrays {
+		if arr.HasChanges() {
+			return true
+		}
+	}
+	for _, m := range cs.maps {
+		if m.HasChanges() {
+			return true
+		}
+	}
+	return false
 }
 
 // Clear removes all tracked changes
@@ -144,12 +161,11 @@ func (cs *ChangeSet) Clear() {
 	cs.dirty[1] = 0
 	cs.dirty[2] = 0
 	cs.dirty[3] = 0
-	// Clear nested objects
+	// Recursively clear nested objects (don't delete from map — cached pointers stay valid)
 	for _, child := range cs.children {
 		child.Clear()
 	}
-	// Clear maps using Go 1.21+ clear() or delete loop
-	clear(cs.children)
+	// Clear array and map change sets
 	clear(cs.arrays)
 	clear(cs.maps)
 }

@@ -1606,3 +1606,360 @@ func (s *timestampTestState) GetFieldValue(index uint8) interface{} {
 	}
 	return nil
 }
+
+// R1: Test that encodeArrayChanges uses change.Value, not the live array
+func TestEncodeArrayChanges_UsesStoredValue(t *testing.T) {
+	registry := NewSchemaRegistry()
+	schema := NewSchemaBuilder("ArrayEncode").
+		WithID(160).
+		Array("items", TypeInt32, nil).
+		Build()
+	registry.Register(schema)
+
+	// Create state with array [10, 20, 30]
+	state := &arrayEncodeTestState{
+		changes: NewChangeSet(),
+		items:   []int32{10, 20, 30},
+	}
+
+	// Mark element at index 1 as replaced with value 99
+	arr := state.changes.GetOrCreateArray(0)
+	arr.MarkReplace(1, int32(99))
+
+	// Now mutate the live array AFTER marking the change
+	// (simulating index shifting from a remove+add in same tick)
+	state.items[1] = 777
+
+	encoder := NewEncoder(registry)
+	data := encoder.Encode(state)
+
+	if len(data) == 0 {
+		t.Fatal("encoded data is empty")
+	}
+
+	decoder := NewDecoder(registry)
+	patch, err := decoder.Decode(data)
+	if err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+
+	if len(patch.Changes) != 1 {
+		t.Fatalf("expected 1 change, got %d", len(patch.Changes))
+	}
+	if len(patch.Changes[0].ArrayChanges) != 1 {
+		t.Fatalf("expected 1 array change, got %d", len(patch.Changes[0].ArrayChanges))
+	}
+
+	// The encoded value should be 99 (the stored value), NOT 777 (the live value)
+	val := patch.Changes[0].ArrayChanges[0].Value
+	if val != int32(99) {
+		t.Errorf("expected stored value 99, got %v (live array was mutated to 777)", val)
+	}
+}
+
+type arrayEncodeTestState struct {
+	changes *ChangeSet
+	items   []int32
+}
+
+func (s *arrayEncodeTestState) Schema() *Schema {
+	return NewSchemaBuilder("ArrayEncode").
+		WithID(160).
+		Array("items", TypeInt32, nil).
+		Build()
+}
+func (s *arrayEncodeTestState) Changes() *ChangeSet { return s.changes }
+func (s *arrayEncodeTestState) ClearChanges()       { s.changes.Clear() }
+func (s *arrayEncodeTestState) MarkAllDirty()       { s.changes.MarkAll(0) }
+func (s *arrayEncodeTestState) GetFieldValue(index uint8) interface{} {
+	if index == 0 {
+		return s.items
+	}
+	return nil
+}
+
+// R6: Test that HasChanges returns false for GetOrCreate'd but empty changesets
+func TestHasChanges_EmptyNestedChangesets(t *testing.T) {
+	cs := NewChangeSet()
+
+	// Create empty array/map/child changesets without marking any changes
+	cs.GetOrCreateArray(0)
+	cs.GetOrCreateMap(1)
+	cs.GetOrCreateChild(2)
+
+	if cs.HasChanges() {
+		t.Error("HasChanges should return false for empty nested changesets")
+	}
+
+	// Now mark an actual change
+	arr := cs.GetOrCreateArray(0)
+	arr.MarkAdd(0, "value")
+	if !cs.HasChanges() {
+		t.Error("HasChanges should return true after marking a change")
+	}
+}
+
+// R8: Test that SchemaRegistry panics on duplicate ID registration
+func TestSchemaRegistry_DuplicateID(t *testing.T) {
+	registry := NewSchemaRegistry()
+
+	schema1 := NewSchemaBuilder("Type1").WithID(42).Int32("field1").Build()
+	schema2 := NewSchemaBuilder("Type2").WithID(42).String("field2").Build()
+
+	registry.Register(schema1)
+
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Error("expected panic on duplicate schema ID registration")
+		}
+	}()
+	registry.Register(schema2)
+}
+
+// R8: Test that re-registering the same schema name with same ID is OK
+func TestSchemaRegistry_ReregisterSameName(t *testing.T) {
+	registry := NewSchemaRegistry()
+
+	schema1 := NewSchemaBuilder("Type1").WithID(42).Int32("field1").Build()
+	schema2 := NewSchemaBuilder("Type1").WithID(42).Int32("field1").String("field2").Build()
+
+	registry.Register(schema1)
+	// Re-registering same name with same ID should NOT panic
+	registry.Register(schema2)
+
+	got := registry.Get(42)
+	if got == nil || len(got.Fields) != 2 {
+		t.Error("expected schema to be updated")
+	}
+}
+
+// R10: Test toFloat32 with float64 input
+func TestToFloat32_FromFloat64(t *testing.T) {
+	result := toFloat32(float64(3.14))
+	if result == 0 {
+		t.Error("toFloat32 should handle float64 input")
+	}
+	if result < 3.13 || result > 3.15 {
+		t.Errorf("expected ~3.14, got %f", result)
+	}
+}
+
+// R10: Test toFloat64 with float32 input
+func TestToFloat64_FromFloat32(t *testing.T) {
+	result := toFloat64(float32(3.14))
+	if result == 0 {
+		t.Error("toFloat64 should handle float32 input")
+	}
+	if result < 3.13 || result > 3.15 {
+		t.Errorf("expected ~3.14, got %f", result)
+	}
+}
+
+// T2: Test decoder handles malformed input without panic/OOM
+func TestDecoder_MalformedStringLength(t *testing.T) {
+	registry := NewSchemaRegistry()
+	schema := NewSchemaBuilder("MalformedTest").
+		WithID(200).
+		String("name").
+		Build()
+	registry.Register(schema)
+	decoder := NewDecoder(registry)
+
+	// Craft a valid-looking patch with an absurdly large string length
+	// MsgPatch(1) + SchemaID(2) + changeCount(1) + fieldIndex(1) + op(1) + huge varint length
+	data := []byte{
+		MsgPatch,
+		0xC8, 0x00, // schema ID 200
+		0x01,                                           // 1 change
+		0x00,                                           // field index 0
+		uint8(OpReplace),                               // operation
+		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F, // varint: MaxInt64-ish
+	}
+
+	_, err := decoder.Decode(data)
+	if err == nil {
+		t.Error("T2 REGRESSION: decoder should reject malformed string with huge length")
+	}
+}
+
+// T2: Test decoder handles truncated array allocation
+func TestDecoder_MalformedArrayLength(t *testing.T) {
+	registry := NewSchemaRegistry()
+	schema := NewSchemaBuilder("MalformedArrayTest").
+		WithID(201).
+		Array("items", TypeInt32, nil).
+		Build()
+	registry.Register(schema)
+	decoder := NewDecoder(registry)
+
+	// Full state with huge array length
+	data := []byte{
+		MsgFullState,
+		0xC9, 0x00, // schema ID 201
+		0x01,                                     // 1 field
+		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x01, // varint: very large array length
+	}
+
+	_, err := decoder.Decode(data)
+	if err == nil {
+		t.Error("T2 REGRESSION: decoder should reject array with length exceeding buffer")
+	}
+}
+
+// T2: Test decoder handles huge map length
+func TestDecoder_MalformedMapLength(t *testing.T) {
+	registry := NewSchemaRegistry()
+	schema := NewSchemaBuilder("MalformedMapTest").
+		WithID(202).
+		Map("data", TypeString, nil).
+		Build()
+	registry.Register(schema)
+	decoder := NewDecoder(registry)
+
+	// Full state with huge map length
+	data := []byte{
+		MsgFullState,
+		0xCA, 0x00, // schema ID 202
+		0x01,                               // 1 field
+		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x01, // varint: very large map length
+	}
+
+	_, err := decoder.Decode(data)
+	if err == nil {
+		t.Error("T2 REGRESSION: decoder should reject map with length exceeding buffer")
+	}
+}
+
+// T2: Test decoder handles huge change count in patch
+func TestDecoder_MalformedChangeCount(t *testing.T) {
+	registry := NewSchemaRegistry()
+	schema := NewSchemaBuilder("MalformedPatchTest").
+		WithID(203).
+		Int32("val").
+		Build()
+	registry.Register(schema)
+	decoder := NewDecoder(registry)
+
+	// Patch with huge change count
+	data := []byte{
+		MsgPatch,
+		0xCB, 0x00,                               // schema ID 203
+		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x01, // varint: very large change count
+	}
+
+	_, err := decoder.Decode(data)
+	if err == nil {
+		t.Error("T2 REGRESSION: decoder should reject patch with change count exceeding buffer")
+	}
+}
+
+// Test OpRemove for simple fields (test gap)
+func TestEncodeDecodeOpRemove(t *testing.T) {
+	registry := NewSchemaRegistry()
+	schema := NewSchemaBuilder("RemoveTest").
+		WithID(204).
+		String("name").
+		Int32("score").
+		Build()
+	registry.Register(schema)
+
+	encoder := NewEncoder(registry)
+	decoder := NewDecoder(registry)
+
+	state := &simpleTrackable{
+		schema:  schema,
+		changes: NewChangeSet(),
+		strVal:  "test",
+		intVal:  42,
+	}
+
+	// Mark name as removed
+	state.changes.Mark(0, OpRemove)
+	data := encoder.Encode(state)
+
+	patch, err := decoder.Decode(data)
+	if err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+
+	found := false
+	for _, change := range patch.Changes {
+		if change.FieldIndex == 0 && change.Op == OpRemove {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected OpRemove change for field 0")
+	}
+}
+
+// Test float32 round-trip (test gap)
+func TestFloat32RoundTrip(t *testing.T) {
+	registry := NewSchemaRegistry()
+	schema := NewSchemaBuilder("FloatTest").
+		WithID(205).
+		Float32("f32").
+		Float64("f64").
+		Build()
+	registry.Register(schema)
+
+	encoder := NewEncoder(registry)
+	decoder := NewDecoder(registry)
+
+	state := &floatTrackable{
+		schema:  schema,
+		changes: NewChangeSet(),
+		f32:     3.14,
+		f64:     2.718281828,
+	}
+
+	// Encode full state
+	data := encoder.EncodeAll(state)
+	patch, err := decoder.Decode(data)
+	if err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+
+	if len(patch.Changes) != 2 {
+		t.Fatalf("expected 2 changes, got %d", len(patch.Changes))
+	}
+
+	f32Val, ok := patch.Changes[0].Value.(float32)
+	if !ok {
+		t.Fatalf("expected float32, got %T", patch.Changes[0].Value)
+	}
+	if f32Val < 3.13 || f32Val > 3.15 {
+		t.Errorf("float32 round-trip failed: got %f", f32Val)
+	}
+
+	f64Val, ok := patch.Changes[1].Value.(float64)
+	if !ok {
+		t.Fatalf("expected float64, got %T", patch.Changes[1].Value)
+	}
+	if f64Val < 2.71 || f64Val > 2.72 {
+		t.Errorf("float64 round-trip failed: got %f", f64Val)
+	}
+}
+
+// floatTrackable is a test helper for float encoding
+type floatTrackable struct {
+	schema  *Schema
+	changes *ChangeSet
+	f32     float32
+	f64     float64
+}
+
+func (ft *floatTrackable) Schema() *Schema          { return ft.schema }
+func (ft *floatTrackable) Changes() *ChangeSet      { return ft.changes }
+func (ft *floatTrackable) ClearChanges()             { ft.changes.Clear() }
+func (ft *floatTrackable) MarkAllDirty()             { ft.changes.MarkAll(1) }
+func (ft *floatTrackable) GetFieldValue(index uint8) interface{} {
+	switch index {
+	case 0:
+		return ft.f32
+	case 1:
+		return ft.f64
+	}
+	return nil
+}

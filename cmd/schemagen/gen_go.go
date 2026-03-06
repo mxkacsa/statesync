@@ -231,7 +231,7 @@ func (t *{{$t.Name}}) ResetToDefaults() {
 	{{- range $i, $f := $t.Fields}}
 	t.{{lower $f.Name}} = {{goDefaultValue $f}}
 	{{- end}}
-	t.changes.MarkAll({{sub (len $t.Fields) 1}})
+	{{if gt (len $t.Fields) 0}}t.changes.MarkAll({{sub (len $t.Fields) 1}}){{end}}
 }
 
 // {{$t.Name}}Schema returns the schema for {{$t.Name}}
@@ -261,7 +261,7 @@ func {{$t.Name}}Schema() *statesync.Schema {
 func (t *{{$t.Name}}) Schema() *statesync.Schema     { return t.schema }
 func (t *{{$t.Name}}) Changes() *statesync.ChangeSet { return t.changes }
 func (t *{{$t.Name}}) ClearChanges()                 { t.changes.Clear() }
-func (t *{{$t.Name}}) MarkAllDirty()                 { t.changes.MarkAll({{sub (len $t.Fields) 1}}) }
+func (t *{{$t.Name}}) MarkAllDirty()                 { {{if gt (len $t.Fields) 0}}t.changes.MarkAll({{sub (len $t.Fields) 1}}){{end}} }
 
 func (t *{{$t.Name}}) GetFieldValue(index uint8) interface{} {
 	t.mu.RLock()

@@ -50,11 +50,15 @@ func NewDiffRecorder() *DiffRecorder {
 
 // SetSource sets the source identifier for subsequent records
 func (dr *DiffRecorder) SetSource(source string) {
+	dr.mu.Lock()
+	defer dr.mu.Unlock()
 	dr.source = source
 }
 
 // SetTick sets the current tick for subsequent records
 func (dr *DiffRecorder) SetTick(tick uint64) {
+	dr.mu.Lock()
+	defer dr.mu.Unlock()
 	dr.tick = tick
 }
 
@@ -63,6 +67,9 @@ func (dr *DiffRecorder) Record(seq uint64, data []byte, events []Event, delta ti
 	if len(data) == 0 {
 		return // Skip empty diffs
 	}
+
+	dr.mu.Lock()
+	defer dr.mu.Unlock()
 
 	record := DiffRecord{
 		Seq:       seq,
@@ -79,16 +86,16 @@ func (dr *DiffRecorder) Record(seq uint64, data []byte, events []Event, delta ti
 		copy(record.Events, events)
 	}
 
-	dr.mu.Lock()
 	dr.records = append(dr.records, record)
-	dr.mu.Unlock()
 }
 
-// Records returns all captured records
+// Records returns a copy of all captured records
 func (dr *DiffRecorder) Records() []DiffRecord {
 	dr.mu.Lock()
 	defer dr.mu.Unlock()
-	return dr.records
+	cp := make([]DiffRecord, len(dr.records))
+	copy(cp, dr.records)
+	return cp
 }
 
 // Clear removes all captured records
@@ -184,7 +191,7 @@ func (mr *MapReplayer) ReplayRange(records []DiffRecord, fromSeq, toSeq uint64) 
 			continue
 		}
 		if record.Seq > toSeq {
-			break
+			continue
 		}
 		if _, err := mr.Replay(record); err != nil {
 			return err

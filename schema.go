@@ -3,6 +3,7 @@ package statesync
 import (
 	"fmt"
 	"reflect"
+	"sync"
 )
 
 // FieldType represents the wire type for encoding
@@ -97,6 +98,9 @@ func NewSchema(id uint16, name string) *Schema {
 
 // AddField adds a field to the schema
 func (s *Schema) AddField(field FieldMeta) *Schema {
+	if len(s.Fields) >= 256 {
+		panic(fmt.Sprintf("statesync: schema %q exceeds maximum of 256 fields", s.Name))
+	}
 	if field.Index != uint8(len(s.Fields)) {
 		panic(fmt.Sprintf("field index %d doesn't match position %d", field.Index, len(s.Fields)))
 	}
@@ -166,6 +170,7 @@ type FastEncoder interface {
 
 // SchemaRegistry maintains schema ID mappings
 type SchemaRegistry struct {
+	mu      sync.RWMutex
 	schemas map[uint16]*Schema
 	byName  map[string]*Schema
 	nextID  uint16
@@ -180,11 +185,19 @@ func NewSchemaRegistry() *SchemaRegistry {
 	}
 }
 
-// Register adds a schema to the registry
+// ErrDuplicateSchemaID is returned when registering a schema with an ID already in use
+var ErrDuplicateSchemaID = fmt.Errorf("duplicate schema ID")
+
+// Register adds a schema to the registry.
+// Panics if a schema with the same explicit ID is already registered.
 func (r *SchemaRegistry) Register(schema *Schema) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if schema.ID == 0 {
 		schema.ID = r.nextID
 		r.nextID++
+	} else if existing, ok := r.schemas[schema.ID]; ok && existing.Name != schema.Name {
+		panic(fmt.Sprintf("statesync: %v: schema %q and %q both use ID %d", ErrDuplicateSchemaID, existing.Name, schema.Name, schema.ID))
 	}
 	r.schemas[schema.ID] = schema
 	r.byName[schema.Name] = schema
@@ -192,11 +205,15 @@ func (r *SchemaRegistry) Register(schema *Schema) {
 
 // Get returns a schema by ID
 func (r *SchemaRegistry) Get(id uint16) *Schema {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	return r.schemas[id]
 }
 
 // GetByName returns a schema by name
 func (r *SchemaRegistry) GetByName(name string) *Schema {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	return r.byName[name]
 }
 
@@ -384,6 +401,9 @@ func (b *SchemaBuilder) Build() *Schema {
 }
 
 func (b *SchemaBuilder) field(name string, typ FieldType) *SchemaBuilder {
+	if len(b.schema.Fields) >= 256 {
+		panic(fmt.Sprintf("statesync: schema %q exceeds maximum of 256 fields", b.schema.Name))
+	}
 	b.schema.AddField(FieldMeta{
 		Index: uint8(len(b.schema.Fields)),
 		Name:  name,
