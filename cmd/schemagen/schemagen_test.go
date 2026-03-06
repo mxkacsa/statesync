@@ -1299,3 +1299,73 @@ func TestTsDefaultValue(t *testing.T) {
 		}
 	}
 }
+
+// T15: @id(0) should be rejected by the parser
+func TestParser_IdZeroRejected(t *testing.T) {
+	input := `
+package test
+
+@id(0)
+type Broken {
+    Name string
+}
+`
+	_, err := Parse(strings.NewReader(input))
+	if err == nil {
+		t.Error("expected error for @id(0), got nil")
+	}
+}
+
+// T15: @id(-1) should be rejected
+func TestParser_IdNegativeRejected(t *testing.T) {
+	input := `
+package test
+
+@id(-1)
+type Broken {
+    Name string
+}
+`
+	_, err := Parse(strings.NewReader(input))
+	if err == nil {
+		t.Error("expected error for @id(-1), got nil")
+	}
+}
+
+// T12: zero-field type should generate valid code (MarkAllDirty guard)
+func TestGenerateGo_ZeroFieldType(t *testing.T) {
+	schema := &SchemaFile{
+		Package: "test",
+		Types: []*TypeDef{
+			{
+				Name:         "Empty",
+				ID:           1,
+				Role:         RoleRoot,
+				DefaultState: "active",
+				Fields:       []*FieldDef{},
+			},
+		},
+		Views: []*ViewDef{},
+	}
+
+	goCode, err := GenerateGo(schema)
+	if err != nil {
+		t.Fatalf("GenerateGo error: %v", err)
+	}
+
+	code := string(goCode)
+
+	// MarkAllDirty should NOT contain MarkAll(-1) or MarkAll(255)
+	if strings.Contains(code, "MarkAll(255)") {
+		t.Error("T12 REGRESSION: zero-field type generates MarkAll(255)")
+	}
+	if strings.Contains(code, "MarkAll(-1)") {
+		t.Error("T12 REGRESSION: zero-field type generates MarkAll(-1)")
+	}
+
+	// Should not call MarkAll at all for zero fields
+	if strings.Contains(code, "MarkAllDirty") && strings.Contains(code, "MarkAll(") {
+		// Check it's guarded (MarkAllDirty body should be empty or not call MarkAll)
+		t.Log("MarkAllDirty exists (expected for Trackable interface compliance)")
+	}
+}

@@ -1963,3 +1963,109 @@ func (ft *floatTrackable) GetFieldValue(index uint8) interface{} {
 	}
 	return nil
 }
+
+// MED-3: decodeStruct with nil ChildSchema returns error, not panic
+func TestDecoder_NilChildSchema(t *testing.T) {
+	registry := NewSchemaRegistry()
+	schema := NewSchemaBuilder("NilChild").WithID(50).Build()
+	// Manually add a struct field with nil ChildSchema
+	schema.Fields = append(schema.Fields, FieldMeta{
+		Name: "broken",
+		Type: TypeStruct,
+		// ChildSchema intentionally nil
+	})
+	registry.Register(schema)
+
+	// Encode a minimal full-state message: MsgFullState + schemaID(50) + fieldCount(1) + null marker
+	buf := []byte{MsgFullState, 50, 0, 1, 1} // schemaID=50 (little-endian), fieldCount=1, isNull=1
+	decoder := NewDecoder(registry)
+	_, err := decoder.Decode(buf)
+	if err == nil {
+		t.Error("expected error for nil ChildSchema, got nil")
+	}
+}
+
+// CRIT-2: EventPayloadEncoder.Bytes() returns independent copy
+func TestEventPayloadEncoder_BytesCopy(t *testing.T) {
+	enc := NewEventPayloadEncoder()
+	enc.WriteString("hello")
+	data1 := enc.Bytes()
+
+	enc.Reset()
+	enc.WriteString("world")
+	data2 := enc.Bytes()
+
+	// data1 should still contain "hello" encoding, not "world"
+	if bytes.Equal(data1, data2) {
+		t.Error("CRIT-2 REGRESSION: Bytes() returned buffer alias, not independent copy")
+	}
+
+	// Verify data1 wasn't corrupted by second encode
+	origEnc := NewEventPayloadEncoder()
+	origEnc.WriteString("hello")
+	expected := origEnc.Bytes()
+	if !bytes.Equal(data1, expected) {
+		t.Error("CRIT-2 REGRESSION: first Bytes() result corrupted by second encode")
+	}
+}
+
+// A2-CRIT1: encodeChanges filters out-of-schema dirty bits
+func TestEncodeChanges_OutOfSchemaFieldIndex(t *testing.T) {
+	registry := NewSchemaRegistry()
+	schema := NewSchemaBuilder("Small").WithID(60).
+		Int32("x").
+		Build()
+	registry.Register(schema)
+
+	cs := NewChangeSet()
+	// Mark field 0 (valid) and field 5 (out of schema range)
+	cs.Mark(0, OpReplace)
+	cs.Mark(5, OpReplace)
+
+	st := &simpleTrackable{
+		schema:  schema,
+		changes: cs,
+		intVal:  42,
+	}
+
+	encoder := NewEncoder(registry)
+	data := encoder.Encode(st)
+	if data == nil {
+		t.Fatal("Encode returned nil")
+	}
+
+	// Decode should succeed (only 1 valid field encoded, not 2)
+	decoder := NewDecoder(registry)
+	patch, err := decoder.Decode(data)
+	if err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if len(patch.Changes) != 1 {
+		t.Errorf("expected 1 change (only valid field), got %d", len(patch.Changes))
+	}
+}
+
+// T2 supplement: decoder bounds check for inner array change count
+func TestDecoder_MalformedInnerArrayChangeCount(t *testing.T) {
+	registry := NewSchemaRegistry()
+	childSchema := NewSchemaBuilder("Child").Int32("v").Build()
+	schema := NewSchemaBuilder("ArrTest").WithID(70).
+		ArrayByKey("items", TypeStruct, childSchema, "v").
+		Build()
+	registry.Register(schema)
+
+	// Build a minimal patch message with ArrayModeIncremental and a huge change count
+	var buf []byte
+	buf = append(buf, MsgPatch)        // message type
+	buf = append(buf, 70, 0)           // schemaID = 70 (little-endian)
+	buf = append(buf, 1)               // 1 change (varuint)
+	buf = append(buf, 0)               // field index 0 (the array)
+	buf = append(buf, ArrayModeIncremental) // incremental mode
+	buf = append(buf, 0xFF, 0xFF, 0xFF, 0xFF, 0x0F) // huge varuint change count
+
+	decoder := NewDecoder(registry)
+	_, err := decoder.Decode(buf)
+	if err == nil {
+		t.Error("expected error for malformed inner array change count")
+	}
+}

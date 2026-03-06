@@ -1330,3 +1330,155 @@ func TestReconnect_FilteredClientGetsFilteredHistory(t *testing.T) {
 	}
 	_ = updates
 }
+
+// T8: SchemaRegistry concurrent Register/Get safety
+func TestSchemaRegistry_ConcurrentAccess(t *testing.T) {
+	registry := NewSchemaRegistry()
+
+	// Pre-register some schemas
+	for i := 1; i <= 10; i++ {
+		s := NewSchemaBuilder("Pre" + string(rune('A'+i))).WithID(uint16(i)).Int32("x").Build()
+		registry.Register(s)
+	}
+
+	var wg sync.WaitGroup
+	// Concurrent readers
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for j := 0; j < 1000; j++ {
+				_ = registry.Get(uint16(id%10 + 1))
+				_ = registry.GetByName("Pre" + string(rune('A'+id%10+1)))
+			}
+		}(i)
+	}
+	// Concurrent writers (new schemas with auto-assigned IDs)
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				s := NewSchemaBuilder("Dyn" + string(rune('A'+n)) + string(rune('0'+j%10))).Int32("v").Build()
+				registry.Register(s)
+			}
+		}(i)
+	}
+	wg.Wait()
+}
+
+// CRIT-1 R4: encoderMu prevents concurrent Encode race
+func TestEncoderMu_ConcurrentEncode(t *testing.T) {
+	state := NewTestGameState()
+	state.SetRound(1)
+	state.SetPhase("lobby")
+	tracked := NewTrackedState[*TestGameState, string](state, nil)
+
+	var wg sync.WaitGroup
+	// Concurrent EncodeAll calls
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				data := tracked.EncodeAll()
+				if len(data) == 0 {
+					t.Error("EncodeAll returned empty data")
+				}
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+// CRIT-1 R5: TickWithSeq returns unique seq under concurrent access
+func TestTickWithSeq_ConcurrentUniqueness(t *testing.T) {
+	state := NewTestGameState()
+	tracked := NewTrackedState[*TestGameState, string](state, nil)
+	session := NewTrackedSession[*TestGameState, string, string](tracked)
+	session.Connect("c1", nil)
+
+	// Initial tick
+	state.SetRound(1)
+	session.Tick()
+
+	var mu sync.Mutex
+	seqs := make(map[uint64]bool)
+	var wg sync.WaitGroup
+
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			state.SetRound(n + 2)
+			_, seq := session.TickWithSeq()
+			mu.Lock()
+			if seqs[seq] {
+				t.Errorf("duplicate seq %d", seq)
+			}
+			seqs[seq] = true
+			mu.Unlock()
+		}(i)
+	}
+	wg.Wait()
+}
+
+// R6: ScheduleBroadcast with nil callback still calls Tick
+func TestScheduleBroadcast_NilCallback(t *testing.T) {
+	state := NewTestGameState()
+	tracked := NewTrackedState[*TestGameState, string](state, nil)
+	session := NewTrackedSession[*TestGameState, string, string](tracked)
+	session.Connect("c1", nil)
+
+	// Initial tick to clear needsFull
+	state.SetRound(1)
+	session.Tick()
+
+	// Make a change, then ScheduleBroadcast WITHOUT setting a callback
+	state.SetRound(2)
+
+	// No callback set — ScheduleBroadcast should still call Tick() internally
+	session.ScheduleBroadcast()
+
+	// After Tick, changes should be committed — encoding should return nil (no changes)
+	if tracked.HasChanges() {
+		t.Error("ScheduleBroadcast with nil callback should still commit changes via Tick()")
+	}
+}
+
+// R8: Reconnect full-state path — next Tick sends patch, not another full state
+func TestReconnect_NextTickSendsPatch(t *testing.T) {
+	state := NewTestGameState()
+	tracked := NewTrackedState[*TestGameState, string](state, nil)
+	session := NewTrackedSession[*TestGameState, string, string](tracked)
+
+	// Make some initial state and tick
+	state.SetRound(1)
+	session.Tick()
+
+	// Reconnect with sinceSeq=0, no history → full state path
+	updates, isFull := session.Reconnect("c1", 0, nil)
+	if !isFull {
+		t.Fatal("expected full state sync")
+	}
+	if len(updates) == 0 {
+		t.Fatal("expected full state data")
+	}
+
+	// Verify full state was MsgFullState
+	if updates[0][0] != MsgFullState {
+		t.Errorf("expected MsgFullState (0x%02x), got 0x%02x", MsgFullState, updates[0][0])
+	}
+
+	// Now make a change and tick — should send a patch, not another full state
+	state.SetRound(2)
+	diffs := session.Tick()
+
+	data, ok := diffs["c1"]
+	if !ok || len(data) == 0 {
+		t.Fatal("expected diff for c1 after reconnect")
+	}
+	if data[0] != MsgPatch {
+		t.Errorf("expected MsgPatch (0x%02x) after reconnect, got 0x%02x (clientNeedsFull not cleared?)", MsgPatch, data[0])
+	}
+}
