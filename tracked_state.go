@@ -120,7 +120,7 @@ func (s *TrackedState[T, A]) EncodeWithFilter(filter func(T) T) []byte {
 	if filter != nil {
 		state = filter(state)
 	}
-	if !state.Changes().HasChanges() {
+	if any(state) == nil || !state.Changes().HasChanges() {
 		return nil
 	}
 	return s.encoder.Encode(state)
@@ -134,6 +134,9 @@ func (s *TrackedState[T, A]) EncodeAllWithFilter(filter func(T) T) []byte {
 	state := s.withEffects(s.current)
 	if filter != nil {
 		state = filter(state)
+	}
+	if any(state) == nil {
+		return nil
 	}
 	return s.encoder.EncodeAll(state)
 }

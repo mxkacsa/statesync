@@ -215,6 +215,11 @@ func (s *TrackedSession[T, A, ID]) Full(id ID) []byte {
 		state = filter(state)
 	}
 
+	// Filter returned nil (e.g., player not found in state)
+	if any(state) == nil {
+		return nil
+	}
+
 	// Hook: after filter
 	if hooks.OnAfterFilter != nil {
 		hooks.OnAfterFilter(id, state)
@@ -298,6 +303,11 @@ func (s *TrackedSession[T, A, ID]) Broadcast() map[ID][]byte {
 		state := rawState
 		if filter != nil {
 			state = filter(rawState)
+		}
+
+		// Skip clients whose filter returned nil (e.g., player not found in state)
+		if any(state) == nil {
+			continue
 		}
 
 		// Hook: after filter
