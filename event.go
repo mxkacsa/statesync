@@ -86,6 +86,11 @@ func (eb *EventBuffer[ID]) Drain() []PendingEvent[ID] {
 	// even if Add() is called concurrently.
 	result := make([]PendingEvent[ID], len(eb.events))
 	copy(result, eb.events)
+	// Zero out retained elements to allow GC of payload/slice references
+	var zero PendingEvent[ID]
+	for i := range eb.events {
+		eb.events[i] = zero
+	}
 	eb.events = eb.events[:0]
 	eb.count.Store(0)
 	return result
@@ -104,6 +109,11 @@ func (eb *EventBuffer[ID]) HasEvents() bool {
 // Clear removes all pending events without returning them
 func (eb *EventBuffer[ID]) Clear() {
 	eb.mu.Lock()
+	// Zero out retained elements to allow GC of payload/slice references
+	var zero PendingEvent[ID]
+	for i := range eb.events {
+		eb.events[i] = zero
+	}
 	eb.events = eb.events[:0]
 	eb.count.Store(0)
 	eb.mu.Unlock()

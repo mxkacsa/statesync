@@ -106,6 +106,11 @@ func (d *Decoder) decodeFullState() (*DecodedPatch, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Bound check: each field needs at least 1 byte
+	remaining := len(d.buf) - d.pos
+	if int(fieldCount) > remaining {
+		return nil, ErrBufferTooSmall
+	}
 
 	changes := make([]DecodedChange, fieldCount)
 	for i := uint8(0); i < fieldCount; i++ {

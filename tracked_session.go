@@ -331,8 +331,13 @@ func (s *TrackedSession[T, A, ID]) Broadcast() map[ID][]byte {
 			if !fullDiffComputed {
 				fullDiff = s.state.lockedEncode(rawState)
 				fullDiffComputed = true
+				data = fullDiff // first unfiltered client gets the original
+			} else {
+				// Subsequent unfiltered clients get a copy to prevent aliasing
+				cp := make([]byte, len(fullDiff))
+				copy(cp, fullDiff)
+				data = cp
 			}
-			data = fullDiff
 		} else {
 			// Filtered diff
 			if !state.Changes().HasChanges() {
@@ -361,6 +366,14 @@ func (s *TrackedSession[T, A, ID]) Broadcast() map[ID][]byte {
 
 // Tick performs a full update cycle: broadcast + commit changes + increment sequence
 func (s *TrackedSession[T, A, ID]) Tick() map[ID][]byte {
+	diffs, _ := s.tickInternal()
+	return diffs
+}
+
+// tickInternal performs the actual tick and returns both diffs and the sequence number.
+// This avoids the race where TickWithSeq/TickWithEvents re-read s.seq after Tick()
+// returns — a concurrent Tick() could increment s.seq between the two reads.
+func (s *TrackedSession[T, A, ID]) tickInternal() (map[ID][]byte, uint64) {
 	diffs := s.Broadcast()
 
 	// Store base diff before commit (for reconnection without filter)
@@ -412,19 +425,13 @@ func (s *TrackedSession[T, A, ID]) Tick() map[ID][]byte {
 		hooks.OnAfterBroadcast(diffs, baseDiff, currentSeq)
 	}
 
-	return diffs
+	return diffs, currentSeq
 }
 
 // TickWithSeq performs Tick and returns both diffs and the sequence number.
 // The returned sequence should be sent to clients so they can acknowledge receipt.
 func (s *TrackedSession[T, A, ID]) TickWithSeq() (map[ID][]byte, uint64) {
-	diffs := s.Tick()
-
-	s.mu.RLock()
-	seq := s.seq - 1 // Tick incremented it, we want the seq for this tick
-	s.mu.RUnlock()
-
-	return diffs, seq
+	return s.tickInternal()
 }
 
 // GetPendingSince returns all updates since the given sequence number for a client.
@@ -522,6 +529,12 @@ func (s *TrackedSession[T, A, ID]) Reconnect(id ID, lastSeq uint64, filter Filte
 	if fullData == nil { // T5: nil Full() → don't wrap in slice
 		return nil, false
 	}
+
+	// Update clientSeq to account for any ticks that fired during Full()
+	s.mu.Lock()
+	s.clientSeq[id] = s.seq - 1
+	s.mu.Unlock()
+
 	return [][]byte{fullData}, true
 }
 
@@ -805,13 +818,8 @@ type TickResult[ID comparable] struct {
 //	    sendToClient(clientID, events)
 //	}
 func (s *TrackedSession[T, A, ID]) TickWithEvents() TickResult[ID] {
-	// Get state diffs
-	diffs := s.Tick()
-
-	// Get sequence (already incremented by Tick)
-	s.mu.RLock()
-	seq := s.seq - 1 // Tick incremented it, we want the seq for this tick
-	s.mu.RUnlock()
+	// Get state diffs and sequence atomically from tickInternal
+	diffs, seq := s.tickInternal()
 
 	// T6: Always drain events — lock-free HasEvents() check had a race
 	// where events added between HasEvents() and Tick() would be delayed by 1 tick
