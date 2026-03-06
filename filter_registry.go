@@ -1,6 +1,7 @@
 package statesync
 
 import (
+	"sort"
 	"sync"
 )
 
@@ -122,10 +123,15 @@ func (r *FilterRegistry[T, ID]) Compose(viewerID ID) FilterFunc[T] {
 		return nil
 	}
 
-	// Copy filters to avoid holding lock during execution
+	// Copy filters in deterministic order (sorted by filter ID) to avoid holding lock during execution
+	ids := make([]string, 0, len(viewerFilters))
+	for id := range viewerFilters {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
 	fns := make([]FilterFunc[T], 0, len(viewerFilters))
-	for _, f := range viewerFilters {
-		fns = append(fns, f)
+	for _, id := range ids {
+		fns = append(fns, viewerFilters[id])
 	}
 	r.mu.RUnlock()
 

@@ -57,6 +57,7 @@ type TrackedSession[T Trackable, A any, ID comparable] struct {
 
 	// Debounce support
 	debounceMu    sync.Mutex
+	broadcastMu   sync.Mutex // Prevents concurrent Tick() calls from debounce
 	debounce      time.Duration
 	debounceTimer *time.Timer
 	onBroadcast   func(map[ID][]byte)
@@ -451,14 +452,20 @@ func (s *TrackedSession[T, A, ID]) GetPendingSince(id ID, sinceSeq uint64) ([][]
 	}
 
 	// Collect all diffs since the requested sequence
+	// Check if client has a filter - if so, we can't safely fall back to unfiltered base diff
+	clientFilter := s.clients[id]
 	var pending [][]byte
 	for _, entry := range s.history {
 		if entry.seq > sinceSeq {
 			// Try client-specific diff first (has filter applied)
 			if data, ok := entry.diffs[id]; ok && len(data) > 0 {
 				pending = append(pending, data)
+			} else if clientFilter != nil {
+				// Client has filter but no filtered diff available for this entry -
+				// can't safely use unfiltered base diff, client needs full state
+				return nil, false
 			} else if len(entry.baseDiff) > 0 {
-				// Fall back to base diff (no filter)
+				// No filter, safe to use base diff
 				pending = append(pending, entry.baseDiff)
 			}
 		}
@@ -532,10 +539,12 @@ func (s *TrackedSession[T, A, ID]) ScheduleBroadcast() {
 		s.debounceMu.Unlock()
 
 		if callback != nil {
+			s.broadcastMu.Lock()
 			diffs := s.Tick()
 			if len(diffs) > 0 {
 				callback(diffs)
 			}
+			s.broadcastMu.Unlock()
 		}
 		return
 	}
@@ -552,10 +561,12 @@ func (s *TrackedSession[T, A, ID]) ScheduleBroadcast() {
 		s.debounceMu.Unlock()
 
 		if callback != nil {
+			s.broadcastMu.Lock()
 			diffs := s.Tick()
 			if len(diffs) > 0 {
 				callback(diffs)
 			}
+			s.broadcastMu.Unlock()
 		}
 	})
 	s.debounceMu.Unlock()
