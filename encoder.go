@@ -161,11 +161,16 @@ func (e *Encoder) encodeChanges(t Trackable, schema *Schema, changes *ChangeSet)
 
 		// Check if it's an array/map change or simple field change
 		if field.Type == TypeArray {
-			if arrChanges := changes.GetArray(idx); arrChanges != nil && arrChanges.HasChanges() {
-				// Incremental array changes
-				e.writeByte(ArrayModeIncremental)
-				e.encodeArrayChanges(field, arrChanges, t.GetFieldValue(idx))
-				continue
+			// If field-level op is OpReplace (e.g., SetChatMessages was called for full replacement),
+			// always use full mode even if incremental changes were also tracked afterwards.
+			fieldChange := changes.GetFieldChange(idx)
+			if fieldChange.Op != OpReplace {
+				if arrChanges := changes.GetArray(idx); arrChanges != nil && arrChanges.HasChanges() {
+					// Incremental array changes
+					e.writeByte(ArrayModeIncremental)
+					e.encodeArrayChanges(field, arrChanges, t.GetFieldValue(idx))
+					continue
+				}
 			}
 			// Full array replacement
 			e.writeByte(ArrayModeFull)
@@ -173,11 +178,16 @@ func (e *Encoder) encodeChanges(t Trackable, schema *Schema, changes *ChangeSet)
 			continue
 		}
 		if field.Type == TypeMap {
-			if mapChanges := changes.GetMap(idx); mapChanges != nil && mapChanges.HasChanges() {
-				// Incremental map changes
-				e.writeByte(ArrayModeIncremental)
-				e.encodeMapChanges(field, mapChanges, t.GetFieldValue(idx))
-				continue
+			// If field-level op is OpReplace (e.g., SetCollectibles was called for full replacement),
+			// always use full mode even if incremental changes were also tracked afterwards.
+			fieldChange := changes.GetFieldChange(idx)
+			if fieldChange.Op != OpReplace {
+				if mapChanges := changes.GetMap(idx); mapChanges != nil && mapChanges.HasChanges() {
+					// Incremental map changes
+					e.writeByte(ArrayModeIncremental)
+					e.encodeMapChanges(field, mapChanges, t.GetFieldValue(idx))
+					continue
+				}
 			}
 			// Full map replacement
 			e.writeByte(ArrayModeFull)

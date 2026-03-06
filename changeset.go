@@ -170,6 +170,59 @@ func (cs *ChangeSet) Clear() {
 	clear(cs.maps)
 }
 
+// CloneForFilter creates a copy of the ChangeSet suitable for use in projection filters.
+// The clone has its own maps/arrays tracking so that filter modifications (e.g., DeleteCollectiblesKey)
+// don't corrupt the original ChangeSet that other filters will read.
+// Scalar dirty bits and ops are copied by value (cheap). Map/array change sets are deep-copied.
+func (cs *ChangeSet) CloneForFilter() *ChangeSet {
+	cs.mu.RLock()
+	defer cs.mu.RUnlock()
+
+	clone := &ChangeSet{
+		dirty: cs.dirty,
+		ops:   cs.ops,
+	}
+
+	// Deep-copy map change sets
+	if len(cs.maps) > 0 {
+		clone.maps = make(map[uint8]*MapChangeSet, len(cs.maps))
+		for idx, mcs := range cs.maps {
+			if mcs == nil {
+				continue
+			}
+			clonedMcs := &MapChangeSet{changes: make(map[string]MapEntryChange, len(mcs.changes))}
+			for k, v := range mcs.changes {
+				clonedMcs.changes[k] = v
+			}
+			clone.maps[idx] = clonedMcs
+		}
+	}
+
+	// Deep-copy array change sets
+	if len(cs.arrays) > 0 {
+		clone.arrays = make(map[uint8]*ArrayChangeSet, len(cs.arrays))
+		for idx, acs := range cs.arrays {
+			if acs == nil {
+				continue
+			}
+			clonedAcs := &ArrayChangeSet{
+				changes: make(map[int]ArrayElementChange, len(acs.changes)),
+				oldLen:  acs.oldLen,
+				newLen:  acs.newLen,
+			}
+			for k, v := range acs.changes {
+				clonedAcs.changes[k] = v
+			}
+			clone.arrays[idx] = clonedAcs
+		}
+	}
+
+	// Note: children (nested struct ChangeSets) are NOT deep-copied.
+	// Projections don't modify nested struct schemas directly.
+
+	return clone
+}
+
 // MarkAll marks all fields up to maxIndex as changed (for full sync)
 func (cs *ChangeSet) MarkAll(maxIndex uint8) {
 	cs.mu.Lock()
