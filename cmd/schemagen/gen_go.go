@@ -167,8 +167,9 @@ func GenerateGo(schema *SchemaFile) ([]byte, error) {
 		"hasAutoGenUUID":    hasAutoGenUUID,
 		"getRootSchemas":    getRootSchemas,
 		"isRoot":            func(t *TypeDef) bool { return t.Role == RoleRoot },
-		"isActiveByDefault":  func(t *TypeDef) bool { return t.DefaultState == "active" },
-		"hasComplexFields":   typeHasComplexFields,
+		"isActiveByDefault": func(t *TypeDef) bool { return t.DefaultState == "active" },
+		"hasComplexFields":  typeHasComplexFields,
+		"needsMutex":        func(t *TypeDef) bool { return t.Role == RoleRoot },
 	}).Parse(goTemplate)
 	if err != nil {
 		return nil, fmt.Errorf("template parse error: %w", err)
@@ -205,7 +206,9 @@ import (
 {{range $t := .Types}}
 // {{$t.Name}} is a tracked state type
 type {{$t.Name}} struct {
+	{{- if needsMutex $t}}
 	mu      sync.RWMutex
+	{{- end}}
 	changes *statesync.ChangeSet
 	schema  *statesync.Schema
 
@@ -226,8 +229,10 @@ func New{{$t.Name}}() *{{$t.Name}} {
 
 // ResetToDefaults resets all fields to their default values
 func (t *{{$t.Name}}) ResetToDefaults() {
+	{{- if needsMutex $t}}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	{{- end}}
 	{{- range $i, $f := $t.Fields}}
 	t.{{lower $f.Name}} = {{goDefaultValue $f}}
 	{{- end}}
@@ -264,14 +269,32 @@ func (t *{{$t.Name}}) ClearChanges()                 { t.changes.Clear() }
 func (t *{{$t.Name}}) MarkAllDirty()                 { {{if gt (len $t.Fields) 0}}t.changes.MarkAll({{sub (len $t.Fields) 1}}){{end}} }
 
 func (t *{{$t.Name}}) GetFieldValue(index uint8) interface{} {
+	{{- if needsMutex $t}}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
+	{{- end}}
 	switch index {
 	{{- range $i, $f := $t.Fields}}
 	case {{$i}}:
 		{{- $pt := parseType $f.Type}}
 		{{- if or (eq $f.Type "int") (eq $f.Type "uint")}}
 		return int64(t.{{lower $f.Name}})
+		{{- else if $pt.IsMap}}
+		if t.{{lower $f.Name}} == nil {
+			return nil
+		}
+		cp{{$i}} := make({{goType $f.Type}}, len(t.{{lower $f.Name}}))
+		for k, v := range t.{{lower $f.Name}} {
+			cp{{$i}}[k] = v
+		}
+		return cp{{$i}}
+		{{- else if $pt.IsArray}}
+		if t.{{lower $f.Name}} == nil {
+			return nil
+		}
+		cp{{$i}} := make({{goType $f.Type}}, len(t.{{lower $f.Name}}))
+		copy(cp{{$i}}, t.{{lower $f.Name}})
+		return cp{{$i}}
 		{{- else}}
 		return t.{{lower $f.Name}}
 		{{- end}}
@@ -285,8 +308,10 @@ func (t *{{$t.Name}}) GetFieldValue(index uint8) interface{} {
 // Generated only for types with all primitive fields (no maps/arrays/structs)
 
 func (t *{{$t.Name}}) EncodeChangesTo(e *statesync.Encoder) {
+	{{- if needsMutex $t}}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
+	{{- end}}
 
 	// Count and write number of changes
 	changes := t.changes
@@ -306,8 +331,10 @@ func (t *{{$t.Name}}) EncodeChangesTo(e *statesync.Encoder) {
 }
 
 func (t *{{$t.Name}}) EncodeAllTo(e *statesync.Encoder) {
+	{{- if needsMutex $t}}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
+	{{- end}}
 
 	// Encode all fields directly (no interface{} boxing)
 	{{- range $i, $f := $t.Fields}}
@@ -323,17 +350,35 @@ func (t *{{$t.Name}}) EncodeAllTo(e *statesync.Encoder) {
 {{- $lower := lower $f.Name}}
 
 // {{$f.Name}} returns the current value
+{{- if and $pt.IsMap (needsMutex $t)}}
+// Returns a snapshot copy of the map (safe for concurrent iteration)
+{{- end}}
 func (t *{{$t.Name}}) {{$f.Name}}() {{$goT}} {
+	{{- if needsMutex $t}}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
+	{{- end}}
+	{{- if $pt.IsMap}}
+	if t.{{$lower}} == nil {
+		return nil
+	}
+	cp := make({{$goT}}, len(t.{{$lower}}))
+	for k, v := range t.{{$lower}} {
+		cp[k] = v
+	}
+	return cp
+	{{- else}}
 	return t.{{$lower}}
+	{{- end}}
 }
 
 {{if not $pt.IsArray}}{{if not $pt.IsMap}}
 // Set{{$f.Name}} sets the value and marks it as changed
 func (t *{{$t.Name}}) Set{{$f.Name}}(v {{$goT}}) {
+	{{- if needsMutex $t}}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	{{- end}}
 	{{if and (isPrimitive $f.Type) (ne $f.Type "bytes")}}
 	if t.{{$lower}} != v {
 		t.{{$lower}} = v
@@ -349,16 +394,20 @@ func (t *{{$t.Name}}) Set{{$f.Name}}(v {{$goT}}) {
 {{if $pt.IsArray}}
 // Set{{$f.Name}} replaces the entire slice
 func (t *{{$t.Name}}) Set{{$f.Name}}(v {{$goT}}) {
+	{{- if needsMutex $t}}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	{{- end}}
 	t.{{$lower}} = v
 	t.changes.Mark({{$i}}, statesync.OpReplace)
 }
 
 // Append{{$f.Name}} adds an element to the slice
 func (t *{{$t.Name}}) Append{{$f.Name}}(v {{$pt.ElemType}}) {
+	{{- if needsMutex $t}}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	{{- end}}
 	t.{{$lower}} = append(t.{{$lower}}, v)
 	arr := t.changes.GetOrCreateArray({{$i}})
 	arr.MarkAdd(len(t.{{$lower}})-1, v)
@@ -366,8 +415,10 @@ func (t *{{$t.Name}}) Append{{$f.Name}}(v {{$pt.ElemType}}) {
 
 // Remove{{$f.Name}}At removes an element at index
 func (t *{{$t.Name}}) Remove{{$f.Name}}At(index int) {
+	{{- if needsMutex $t}}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	{{- end}}
 	if index >= 0 && index < len(t.{{$lower}}) {
 		t.{{$lower}} = append(t.{{$lower}}[:index], t.{{$lower}}[index+1:]...)
 		arr := t.changes.GetOrCreateArray({{$i}})
@@ -377,8 +428,10 @@ func (t *{{$t.Name}}) Remove{{$f.Name}}At(index int) {
 
 // Update{{$f.Name}}At updates an element at index
 func (t *{{$t.Name}}) Update{{$f.Name}}At(index int, v {{$pt.ElemType}}) {
+	{{- if needsMutex $t}}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	{{- end}}
 	if index >= 0 && index < len(t.{{$lower}}) {
 		t.{{$lower}}[index] = v
 		arr := t.changes.GetOrCreateArray({{$i}})
@@ -388,15 +441,19 @@ func (t *{{$t.Name}}) Update{{$f.Name}}At(index int, v {{$pt.ElemType}}) {
 
 // {{$f.Name}}Len returns the length of the slice
 func (t *{{$t.Name}}) {{$f.Name}}Len() int {
+	{{- if needsMutex $t}}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
+	{{- end}}
 	return len(t.{{$lower}})
 }
 
 // {{$f.Name}}At returns the element at index
 func (t *{{$t.Name}}) {{$f.Name}}At(index int) {{$pt.ElemType}} {
+	{{- if needsMutex $t}}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
+	{{- end}}
 	if index >= 0 && index < len(t.{{$lower}}) {
 		return t.{{$lower}}[index]
 	}
@@ -408,16 +465,20 @@ func (t *{{$t.Name}}) {{$f.Name}}At(index int) {{$pt.ElemType}} {
 {{if $pt.IsMap}}
 // Set{{$f.Name}} replaces the entire map
 func (t *{{$t.Name}}) Set{{$f.Name}}(v {{$goT}}) {
+	{{- if needsMutex $t}}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	{{- end}}
 	t.{{$lower}} = v
 	t.changes.Mark({{$i}}, statesync.OpReplace)
 }
 
 // Set{{$f.Name}}Key sets a map key
 func (t *{{$t.Name}}) Set{{$f.Name}}Key(key {{$pt.KeyType}}, v {{$pt.ElemType}}) {
+	{{- if needsMutex $t}}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	{{- end}}
 	if t.{{$lower}} == nil {
 		t.{{$lower}} = make({{$goT}})
 	}
@@ -442,8 +503,10 @@ func (t *{{$t.Name}}) Set{{$f.Name}}Key(key {{$pt.KeyType}}, v {{$pt.ElemType}})
 
 // Delete{{$f.Name}}Key deletes a map key
 func (t *{{$t.Name}}) Delete{{$f.Name}}Key(key {{$pt.KeyType}}) {
+	{{- if needsMutex $t}}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	{{- end}}
 	if t.{{$lower}} != nil {
 		if _, ok := t.{{$lower}}[key]; ok {
 			delete(t.{{$lower}}, key)
@@ -455,8 +518,10 @@ func (t *{{$t.Name}}) Delete{{$f.Name}}Key(key {{$pt.KeyType}}) {
 
 // {{$f.Name}}Get returns the value for a key
 func (t *{{$t.Name}}) {{$f.Name}}Get(key {{$pt.KeyType}}) ({{$pt.ElemType}}, bool) {
+	{{- if needsMutex $t}}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
+	{{- end}}
 	if t.{{$lower}} == nil {
 		var zero {{$pt.ElemType}}
 		return zero, false
@@ -469,8 +534,10 @@ func (t *{{$t.Name}}) {{$f.Name}}Get(key {{$pt.KeyType}}) ({{$pt.ElemType}}, boo
 // Modify{{$f.Name}}Key retrieves the value for a key, passes it to the callback for modification,
 // then writes it back and marks the change. Returns false if the key was not found.
 func (t *{{$t.Name}}) Modify{{$f.Name}}Key(key {{$pt.KeyType}}, fn func(*{{$pt.ElemType}})) bool {
+	{{- if needsMutex $t}}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	{{- end}}
 	if t.{{$lower}} == nil {
 		return false
 	}
