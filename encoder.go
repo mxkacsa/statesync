@@ -283,6 +283,9 @@ func (e *Encoder) encodeArray(field *FieldMeta, value interface{}) {
 
 // encodeArrayChanges encodes incremental array changes
 func (e *Encoder) encodeArrayChanges(field *FieldMeta, changes *ArrayChangeSet, value interface{}) {
+	changes.mu.RLock()
+	defer changes.mu.RUnlock()
+
 	// Number of changes
 	e.writeVarUint(uint64(len(changes.changes)))
 
@@ -341,6 +344,9 @@ func (e *Encoder) encodeMap(field *FieldMeta, value interface{}) {
 
 // encodeMapChanges encodes incremental map changes
 func (e *Encoder) encodeMapChanges(field *FieldMeta, changes *MapChangeSet, value interface{}) {
+	changes.mu.RLock()
+	defer changes.mu.RUnlock()
+
 	// Number of changes
 	e.writeVarUint(uint64(len(changes.changes)))
 

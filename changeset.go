@@ -63,6 +63,7 @@ type ChangeSet struct {
 
 // ArrayChangeSet tracks changes to array elements
 type ArrayChangeSet struct {
+	mu sync.RWMutex
 	// Index -> operation for changed elements
 	changes map[int]ArrayElementChange
 	// Track length changes
@@ -78,6 +79,7 @@ type ArrayElementChange struct {
 
 // MapChangeSet tracks changes to map entries
 type MapChangeSet struct {
+	mu sync.RWMutex
 	// Key -> operation for changed entries
 	changes map[string]MapEntryChange
 }
@@ -190,10 +192,12 @@ func (cs *ChangeSet) CloneForFilter() *ChangeSet {
 			if mcs == nil {
 				continue
 			}
+			mcs.mu.RLock()
 			clonedMcs := &MapChangeSet{changes: make(map[string]MapEntryChange, len(mcs.changes))}
 			for k, v := range mcs.changes {
 				clonedMcs.changes[k] = v
 			}
+			mcs.mu.RUnlock()
 			clone.maps[idx] = clonedMcs
 		}
 	}
@@ -205,6 +209,7 @@ func (cs *ChangeSet) CloneForFilter() *ChangeSet {
 			if acs == nil {
 				continue
 			}
+			acs.mu.RLock()
 			clonedAcs := &ArrayChangeSet{
 				changes: make(map[int]ArrayElementChange, len(acs.changes)),
 				oldLen:  acs.oldLen,
@@ -213,6 +218,7 @@ func (cs *ChangeSet) CloneForFilter() *ChangeSet {
 			for k, v := range acs.changes {
 				clonedAcs.changes[k] = v
 			}
+			acs.mu.RUnlock()
 			clone.arrays[idx] = clonedAcs
 		}
 	}
@@ -367,31 +373,43 @@ func trailingZeros64(x uint64) int {
 
 // MarkAdd marks an element addition at index
 func (acs *ArrayChangeSet) MarkAdd(index int, value interface{}) {
+	acs.mu.Lock()
+	defer acs.mu.Unlock()
 	acs.changes[index] = ArrayElementChange{Op: OpAdd, Value: value}
 }
 
 // MarkReplace marks an element replacement at index
 func (acs *ArrayChangeSet) MarkReplace(index int, value interface{}) {
+	acs.mu.Lock()
+	defer acs.mu.Unlock()
 	acs.changes[index] = ArrayElementChange{Op: OpReplace, Value: value}
 }
 
 // MarkRemove marks an element removal at index
 func (acs *ArrayChangeSet) MarkRemove(index int) {
+	acs.mu.Lock()
+	defer acs.mu.Unlock()
 	acs.changes[index] = ArrayElementChange{Op: OpRemove, OldIndex: index}
 }
 
 // MarkMove marks an element move from oldIdx to newIdx
 func (acs *ArrayChangeSet) MarkMove(oldIdx, newIdx int) {
+	acs.mu.Lock()
+	defer acs.mu.Unlock()
 	acs.changes[newIdx] = ArrayElementChange{Op: OpMove, OldIndex: oldIdx}
 }
 
 // HasChanges returns true if array has changes
 func (acs *ArrayChangeSet) HasChanges() bool {
+	acs.mu.RLock()
+	defer acs.mu.RUnlock()
 	return len(acs.changes) > 0
 }
 
 // Clear removes all array changes
 func (acs *ArrayChangeSet) Clear() {
+	acs.mu.Lock()
+	defer acs.mu.Unlock()
 	acs.changes = make(map[int]ArrayElementChange)
 }
 
@@ -399,25 +417,35 @@ func (acs *ArrayChangeSet) Clear() {
 
 // MarkAdd marks a map entry addition
 func (mcs *MapChangeSet) MarkAdd(key string, value interface{}) {
+	mcs.mu.Lock()
+	defer mcs.mu.Unlock()
 	mcs.changes[key] = MapEntryChange{Op: OpAdd, Value: value}
 }
 
 // MarkReplace marks a map entry replacement
 func (mcs *MapChangeSet) MarkReplace(key string, value interface{}) {
+	mcs.mu.Lock()
+	defer mcs.mu.Unlock()
 	mcs.changes[key] = MapEntryChange{Op: OpReplace, Value: value}
 }
 
 // MarkRemove marks a map entry removal
 func (mcs *MapChangeSet) MarkRemove(key string) {
+	mcs.mu.Lock()
+	defer mcs.mu.Unlock()
 	mcs.changes[key] = MapEntryChange{Op: OpRemove}
 }
 
 // HasChanges returns true if map has changes
 func (mcs *MapChangeSet) HasChanges() bool {
+	mcs.mu.RLock()
+	defer mcs.mu.RUnlock()
 	return len(mcs.changes) > 0
 }
 
 // Clear removes all map changes
 func (mcs *MapChangeSet) Clear() {
+	mcs.mu.Lock()
+	defer mcs.mu.Unlock()
 	mcs.changes = make(map[string]MapEntryChange)
 }
