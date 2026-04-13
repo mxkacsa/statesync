@@ -1482,3 +1482,105 @@ func TestReconnect_NextTickSendsPatch(t *testing.T) {
 		t.Errorf("expected MsgPatch (0x%02x) after reconnect, got 0x%02x (clientNeedsFull not cleared?)", MsgPatch, data[0])
 	}
 }
+
+// TestUpdateInPlace verifies the convenience UpdateInPlace method
+func TestUpdateInPlace(t *testing.T) {
+	state := NewTestGameState()
+	ts := NewTrackedState[*TestGameState, any](state, nil)
+
+	// UpdateInPlace should allow direct pointer access without double-pointer
+	ts.UpdateInPlace(func(s *TestGameState) {
+		s.SetRound(42)
+		s.SetPhase("playing")
+	})
+
+	got := ts.Get()
+	if got.Round() != 42 {
+		t.Errorf("Round = %d, want 42", got.Round())
+	}
+	if got.Phase() != "playing" {
+		t.Errorf("Phase = %q, want playing", got.Phase())
+	}
+}
+
+// TestActivatable verifies that OnActivate is called once during AddEffect
+func TestActivatable(t *testing.T) {
+	state := NewTestGameState()
+	state.SetPhase("lobby")
+	ts := NewTrackedState[*TestGameState, any](state, nil)
+
+	activateCount := 0
+	effect := &testActivatableEffect{
+		id: "test-activate",
+		onActivate: func(s *TestGameState, _ any) *TestGameState {
+			activateCount++
+			s.SetPhase("activated")
+			return s
+		},
+		apply: func(s *TestGameState, _ any) *TestGameState {
+			return s // no-op transform
+		},
+	}
+
+	err := ts.AddEffect(effect, nil)
+	if err != nil {
+		t.Fatalf("AddEffect failed: %v", err)
+	}
+
+	// OnActivate should have been called exactly once
+	if activateCount != 1 {
+		t.Errorf("OnActivate called %d times, want 1", activateCount)
+	}
+
+	// OnActivate should have modified the base state
+	base := ts.GetBase()
+	if base.Phase() != "activated" {
+		t.Errorf("Phase = %q, want 'activated' (OnActivate should modify base state)", base.Phase())
+	}
+}
+
+// TestActivatable_NotImplemented verifies normal effects work without OnActivate
+func TestActivatable_NotImplemented(t *testing.T) {
+	state := NewTestGameState()
+	state.SetPhase("lobby")
+	ts := NewTrackedState[*TestGameState, any](state, nil)
+
+	// Regular FuncEffect does NOT implement Activatable
+	effect := Func[*TestGameState, any]("normal", func(s *TestGameState, _ any) *TestGameState {
+		s.SetPhase("transformed")
+		return s
+	})
+
+	err := ts.AddEffect(effect, nil)
+	if err != nil {
+		t.Fatalf("AddEffect failed: %v", err)
+	}
+
+	// Base state should be unchanged (no OnActivate)
+	base := ts.GetBase()
+	if base.Phase() != "lobby" {
+		t.Errorf("Phase = %q, want 'lobby' (base should be unchanged without OnActivate)", base.Phase())
+	}
+
+	// Effective state should show the transform
+	got := ts.Get()
+	if got.Phase() != "transformed" {
+		t.Errorf("effective Phase = %q, want 'transformed'", got.Phase())
+	}
+}
+
+// testActivatableEffect implements both Effect and Activatable
+type testActivatableEffect struct {
+	id         string
+	activator  any
+	onActivate func(*TestGameState, any) *TestGameState
+	apply      func(*TestGameState, any) *TestGameState
+}
+
+func (e *testActivatableEffect) ID() string                             { return e.id }
+func (e *testActivatableEffect) Apply(s *TestGameState, a any) *TestGameState { return e.apply(s, a) }
+func (e *testActivatableEffect) Activator() any                         { return e.activator }
+func (e *testActivatableEffect) SetActivator(a any)                     { e.activator = a }
+func (e *testActivatableEffect) OnActivate(s *TestGameState, a any) *TestGameState {
+	return e.onActivate(s, a)
+}

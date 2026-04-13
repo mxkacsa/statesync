@@ -530,7 +530,42 @@ state.CleanupExpired() // Removes effects implementing Expirable interface
 
 Custom effect types (timed, conditional, toggle, stack) can be implemented
 by satisfying the `Effect[T, A]` interface. Optionally implement `Expirable`
-for automatic cleanup with `CleanupExpired()`, or `Schedulable` for timer-based expiration.
+for automatic cleanup with `CleanupExpired()`, `Schedulable` for timer-based expiration,
+or `Activatable[T, A]` for one-time setup when the effect is added:
+
+```go
+// Activatable effects run OnActivate once during AddEffect
+// Use for one-time side effects (notifications, initial values)
+type myEffect struct { ... }
+
+func (e *myEffect) OnActivate(state T, activator A) T {
+    // Called once - create notification, set initial values
+    state.SetNotification("Effect activated!")
+    return state
+}
+
+func (e *myEffect) Apply(state T, activator A) T {
+    // Called every tick - ongoing state mutation only
+    state.SetDamage(state.Damage() * 2)
+    return state
+}
+```
+
+## JSON Field Helpers
+
+Generic helpers for `bytes` fields that store JSON-encoded Go types:
+
+```go
+// Encode a struct to bytes field
+gs.SetConfig(statesync.MarshalField(cfg))
+
+// Decode bytes field to struct
+cfg := statesync.UnmarshalField[domain.GameConfig](gs.Config())
+
+// Value types (not pointers)
+gs.SetPosition(statesync.MarshalFieldValue(pos))
+pos := statesync.UnmarshalFieldValue[domain.Position](gs.Position())
+```
 
 ## Thread Safety
 

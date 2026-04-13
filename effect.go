@@ -21,6 +21,14 @@ type Expirable interface {
 	Expired() bool
 }
 
+// Activatable is an optional interface for effects that need one-time setup when added.
+// OnActivate is called exactly once from AddEffect, with write access to the base state.
+// Use this for creating notifications, setting initial values, etc. that should only happen once.
+// The Transform/Apply method should only handle ongoing per-tick state mutations.
+type Activatable[T, A any] interface {
+	OnActivate(state T, activator A) T
+}
+
 // Schedulable is an interface for effects that can schedule automatic expiration.
 // Implement this on your effect type to enable automatic timer-based cleanup.
 type Schedulable interface {

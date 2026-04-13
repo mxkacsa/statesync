@@ -194,7 +194,8 @@ func (s *TrackedState[T, A]) HasChanges() bool {
 
 // Effect management
 
-// AddEffect adds an effect to the state
+// AddEffect adds an effect to the state.
+// If the effect implements Activatable, OnActivate is called once with write access to the base state.
 func (s *TrackedState[T, A]) AddEffect(e Effect[T, A], activator A) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -207,6 +208,12 @@ func (s *TrackedState[T, A]) AddEffect(e Effect[T, A], activator A) error {
 
 	e.SetActivator(activator)
 	s.effects = append(s.effects, e)
+
+	// Call OnActivate for one-time setup (notifications, initial values, etc.)
+	if act, ok := any(e).(Activatable[T, A]); ok {
+		s.current = act.OnActivate(s.current, activator)
+	}
+
 	return nil
 }
 

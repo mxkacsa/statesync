@@ -625,7 +625,8 @@ func (t *{{$t.Name}}) {{$f.Name}}Get(key {{$pt.KeyType}}) ({{$pt.ElemType}}, boo
 {{- if not (isPrimitive $pt.ElemType)}}
 
 // Modify{{$f.Name}}Key retrieves the value for a key, passes it to the callback for modification,
-// then writes it back and marks the change. Returns false if the key was not found.
+// then writes it back only if the callback made changes (detected via inner ChangeSet).
+// Returns false if the key was not found.
 func (t *{{$t.Name}}) Modify{{$f.Name}}Key(key {{$pt.KeyType}}, fn func(*{{$pt.ElemType}})) bool {
 	{{- if needsMutex $t}}
 	t.mu.Lock()
@@ -638,11 +639,17 @@ func (t *{{$t.Name}}) Modify{{$f.Name}}Key(key {{$pt.KeyType}}, fn func(*{{$pt.E
 	if !ok {
 		return false
 	}
+	v.Changes().Clear()
 	fn(&v)
+	if !v.Changes().HasChanges() {
+		return true
+	}
 	t.{{$lower}}[key] = v
+	{{- if isSynced $f}}
 	m := t.changes.GetOrCreateMap({{$f.SyncIndex}})
 	vp := v
 	m.MarkReplace(key, &vp)
+	{{- end}}
 	return true
 }
 {{- end}}
