@@ -28,8 +28,9 @@ type Encoder struct {
 	pos      int
 	registry *SchemaRegistry
 	// Reusable sort buffers to avoid allocations in hot paths
-	sortKeys []string
-	sortInts []int
+	sortKeys    []string
+	sortInts    []int
+	sortIndices []int
 }
 
 // NewEncoder creates a new encoder
@@ -37,8 +38,9 @@ func NewEncoder(registry *SchemaRegistry) *Encoder {
 	return &Encoder{
 		buf:      make([]byte, DefaultBufferSize),
 		registry: registry,
-		sortKeys: make([]string, 0, 64),
-		sortInts: make([]int, 0, 64),
+		sortKeys:    make([]string, 0, 64),
+		sortInts:    make([]int, 0, 64),
+		sortIndices: make([]int, 0, 64),
 	}
 }
 
@@ -301,12 +303,13 @@ func (e *Encoder) encodeArrayChanges(field *FieldMeta, changes *ArrayChangeSet, 
 	// Number of changes
 	e.writeVarUint(uint64(len(changes.changes)))
 
-	// Sort indices for deterministic output
-	indices := make([]int, 0, len(changes.changes))
+	// Sort indices for deterministic output (reuse buffer to avoid allocation)
+	indices := e.sortIndices[:0]
 	for idx := range changes.changes {
 		indices = append(indices, idx)
 	}
 	sortInts(indices)
+	e.sortIndices = indices
 
 	for _, idx := range indices {
 		change := changes.changes[idx]
