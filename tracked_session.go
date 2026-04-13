@@ -642,6 +642,11 @@ func (tx *TrackedTx[T, A]) Update(fn func(*T)) {
 	tx.state.Update(fn)
 }
 
+// UpdateInPlace modifies the state within a transaction (no double-pointer indirection)
+func (tx *TrackedTx[T, A]) UpdateInPlace(fn func(T)) {
+	tx.state.UpdateInPlace(fn)
+}
+
 // Get returns the current state
 func (tx *TrackedTx[T, A]) Get() T {
 	return tx.state.Get()
