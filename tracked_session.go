@@ -62,6 +62,7 @@ type TrackedSession[T Trackable, A any, ID comparable] struct {
 	debounceTimer *time.Timer
 	debounceGen   uint64
 	onBroadcast   func(map[ID][]byte)
+	tickWrapper   func(tick func()) // Optional wrapper for external locking around ticks
 
 	// Pipeline hooks
 	hooks SessionHooks[T, ID]
@@ -555,6 +556,17 @@ func (s *TrackedSession[T, A, ID]) SetBroadcastCallback(fn func(map[ID][]byte)) 
 	s.onBroadcast = fn
 }
 
+// SetTickWrapper sets a wrapper function that is called around every debounced Tick.
+// Use this to acquire external locks (e.g., game-level mutex) before the tick runs,
+// preventing races between timer-triggered ticks and explicit state updates.
+// The wrapper receives the tick function and must call it exactly once.
+// Example: session.SetTickWrapper(func(tick func()) { mu.Lock(); defer mu.Unlock(); tick() })
+func (s *TrackedSession[T, A, ID]) SetTickWrapper(wrapper func(tick func())) {
+	s.debounceMu.Lock()
+	defer s.debounceMu.Unlock()
+	s.tickWrapper = wrapper
+}
+
 // ScheduleBroadcast schedules a debounced broadcast
 func (s *TrackedSession[T, A, ID]) ScheduleBroadcast() {
 	s.debounceMu.Lock()
@@ -589,13 +601,26 @@ func (s *TrackedSession[T, A, ID]) ScheduleBroadcast() {
 }
 
 // tickAndNotify calls Tick() under broadcastMu and invokes the callback if there are diffs.
+// If a tickWrapper is set, the entire operation runs inside it (for external locking).
 func (s *TrackedSession[T, A, ID]) tickAndNotify(callback func(map[ID][]byte)) {
-	s.broadcastMu.Lock()
-	diffs := s.Tick()
-	if callback != nil && len(diffs) > 0 {
-		callback(diffs)
+	doTick := func() {
+		s.broadcastMu.Lock()
+		diffs := s.Tick()
+		if callback != nil && len(diffs) > 0 {
+			callback(diffs)
+		}
+		s.broadcastMu.Unlock()
 	}
-	s.broadcastMu.Unlock()
+
+	s.debounceMu.Lock()
+	wrapper := s.tickWrapper
+	s.debounceMu.Unlock()
+
+	if wrapper != nil {
+		wrapper(doTick)
+	} else {
+		doTick()
+	}
 }
 
 // Transaction-based updates

@@ -65,6 +65,15 @@ func (s *TrackedState[T, A]) Update(fn func(*T)) {
 	fn(&s.current)
 }
 
+// UpdateInPlace provides write access to the current state value directly.
+// Use this when T is a pointer type (e.g., *GameState) and you want to call methods
+// on it without double-pointer indirection: fn receives the pointer, not *pointer.
+func (s *TrackedState[T, A]) UpdateInPlace(fn func(T)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	fn(s.current)
+}
+
 // Read provides safe read access to the state.
 // The lock is held for the duration of fn - keep it fast.
 // Use this instead of Get() when you need to read multiple fields atomically.

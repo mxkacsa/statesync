@@ -46,6 +46,7 @@ var (
 	inputFile  = flag.String("input", "", "input .schema file (required)")
 	goOutput   = flag.String("go", "", "Go output file (optional)")
 	tsOutput   = flag.String("ts", "", "TypeScript output file (optional)")
+	jsOutput   = flag.String("js", "", "JavaScript schema output file (optional)")
 	jsonOutput = flag.String("json", "", "JSON schema output file (optional)")
 )
 
@@ -106,6 +107,20 @@ func main() {
 		fmt.Printf("Generated: %s\n", *tsOutput)
 	}
 
+	// Generate JavaScript schema (for statesync frontend decoder)
+	if *jsOutput != "" {
+		jsCode, err := GenerateJS(schema)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "schemagen: JS generation error: %v\n", err)
+			os.Exit(1)
+		}
+		if err := os.WriteFile(*jsOutput, jsCode, 0644); err != nil {
+			fmt.Fprintf(os.Stderr, "schemagen: cannot write JS output: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Generated: %s\n", *jsOutput)
+	}
+
 	// Generate JSON schema (for debugging/tooling)
 	if *jsonOutput != "" {
 		jsonCode, err := GenerateJSON(schema)
@@ -120,8 +135,8 @@ func main() {
 		fmt.Printf("Generated: %s\n", *jsonOutput)
 	}
 
-	if *goOutput == "" && *tsOutput == "" && *jsonOutput == "" {
-		fmt.Fprintln(os.Stderr, "schemagen: no output specified, use -go, -ts, or -json")
+	if *goOutput == "" && *tsOutput == "" && *jsOutput == "" && *jsonOutput == "" {
+		fmt.Fprintln(os.Stderr, "schemagen: no output specified, use -go, -ts, -js, or -json")
 		os.Exit(1)
 	}
 }

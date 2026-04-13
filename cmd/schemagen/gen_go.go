@@ -289,7 +289,14 @@ func (t *{{$t.Name}}) ResetToDefaults() {
 	defer t.mu.Unlock()
 	{{- end}}
 	{{- range $i, $f := $t.Fields}}
+	{{- $pt := parseType $f.Type}}
+	{{- if and (isRoot $t) $pt.IsMap}}
+	t.{{lower $f.Name}} = make({{goType $f.Type}})
+	{{- else if and (isRoot $t) $pt.IsArray}}
+	t.{{lower $f.Name}} = make({{goType $f.Type}}, 0)
+	{{- else}}
 	t.{{lower $f.Name}} = {{goDefaultValue $f}}
+	{{- end}}
 	{{- end}}
 	{{if gt (len $t.Fields) 0}}t.changes.MarkAll({{sub (len $t.Fields) 1}}){{end}}
 }
