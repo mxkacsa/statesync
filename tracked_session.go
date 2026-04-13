@@ -328,17 +328,13 @@ func (s *TrackedSession[T, A, ID]) Broadcast() map[ID][]byte {
 			// New client needs full state
 			data = s.state.lockedEncodeAll(state)
 		} else if filter == nil {
-			// Use cached full diff for unfiltered clients
+			// Use cached full diff for unfiltered clients.
+			// Bytes() already returns a copy (safe), so no additional copying needed.
 			if !fullDiffComputed {
 				fullDiff = s.state.lockedEncode(rawState)
 				fullDiffComputed = true
-				data = fullDiff // first unfiltered client gets the original
-			} else {
-				// Subsequent unfiltered clients get a copy to prevent aliasing
-				cp := make([]byte, len(fullDiff))
-				copy(cp, fullDiff)
-				data = cp
 			}
+			data = fullDiff
 		} else {
 			// Filtered diff
 			if !state.Changes().HasChanges() {
@@ -394,20 +390,13 @@ func (s *TrackedSession[T, A, ID]) tickInternal() (map[ID][]byte, uint64) {
 	currentSeq := s.seq
 	s.seq++
 
-	// Store in history if enabled and there are changes
+	// Store in history if enabled and there are changes.
+	// Encoder.Bytes() already returns owned copies, so no additional deep copy needed.
 	if s.historySize > 0 && len(baseDiff) > 0 {
-		// Deep copy diffs for history (original may be reused)
-		historyDiffs := make(map[ID][]byte, len(diffs))
-		for id, data := range diffs {
-			cp := make([]byte, len(data))
-			copy(cp, data)
-			historyDiffs[id] = cp
-		}
-
 		entry := historyEntry[ID]{
 			seq:      currentSeq,
 			baseDiff: baseDiff,
-			diffs:    historyDiffs,
+			diffs:    diffs,
 		}
 
 		if len(s.history) < s.historySize {

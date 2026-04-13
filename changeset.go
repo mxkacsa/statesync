@@ -321,7 +321,14 @@ func (cs *ChangeSet) changedFieldsLocked() []uint8 {
 		return nil
 	}
 
-	result := make([]uint8, 0, count)
+	// Use stack-allocated buffer for small field counts (typical: <64 fields)
+	var buf [64]uint8
+	var result []uint8
+	if count <= 64 {
+		result = buf[:0]
+	} else {
+		result = make([]uint8, 0, count)
+	}
 
 	// Extract set bits from bitset (already in sorted order)
 	for i := 0; i < 4; i++ {

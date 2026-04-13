@@ -27,6 +27,9 @@ type Encoder struct {
 	buf      []byte
 	pos      int
 	registry *SchemaRegistry
+	// Reusable sort buffers to avoid allocations in hot paths
+	sortKeys []string
+	sortInts []int
 }
 
 // NewEncoder creates a new encoder
@@ -34,6 +37,8 @@ func NewEncoder(registry *SchemaRegistry) *Encoder {
 	return &Encoder{
 		buf:      make([]byte, DefaultBufferSize),
 		registry: registry,
+		sortKeys: make([]string, 0, 64),
+		sortInts: make([]int, 0, 64),
 	}
 }
 
@@ -358,11 +363,12 @@ func (e *Encoder) encodeMapChanges(field *FieldMeta, changes *MapChangeSet, valu
 	e.writeVarUint(uint64(len(changes.changes)))
 
 	// Sort keys for deterministic output
-	keys := make([]string, 0, len(changes.changes))
+	keys := e.sortKeys[:0]
 	for key := range changes.changes {
 		keys = append(keys, key)
 	}
 	sortStrings(keys)
+	e.sortKeys = keys // keep grown capacity
 
 	for _, key := range keys {
 		change := changes.changes[key]
