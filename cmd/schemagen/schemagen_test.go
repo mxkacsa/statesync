@@ -1333,6 +1333,201 @@ type Broken {
 }
 
 // T12: zero-field type should generate valid code (MarkAllDirty guard)
+func TestGenerateGo_ShallowClone(t *testing.T) {
+	input := `
+package game
+
+@id(1) @root(active)
+type GameState {
+    Phase   string
+    Score   int64
+    Players map[string]Player @key(ID)
+    Items   []Item            @key(ID)
+    Config  bytes             @optional
+}
+
+@id(2) @helper
+type Player {
+    ID   string
+    Name string
+}
+
+@id(3) @helper
+type Item {
+    ID    string
+    Value int32
+}
+`
+	schema, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	code, err := GenerateGo(schema)
+	if err != nil {
+		t.Fatalf("generate error: %v", err)
+	}
+
+	codeStr := string(code)
+
+	// ShallowClone should exist for root type
+	if !strings.Contains(codeStr, "func (s *GameState) ShallowClone() *GameState") {
+		t.Error("missing ShallowClone for root type GameState")
+	}
+
+	// ShallowClone should NOT exist for helper types
+	if strings.Contains(codeStr, "func (s *Player) ShallowClone()") {
+		t.Error("ShallowClone should not be generated for helper type Player")
+	}
+
+	// Should deep-copy ChangeSet
+	if !strings.Contains(codeStr, "changes.CloneForFilter()") {
+		t.Error("ShallowClone should use CloneForFilter for ChangeSet")
+	}
+
+	// Should copy map fields (new map + loop)
+	if !strings.Contains(codeStr, "clone.players = make(map[string]Player") {
+		t.Error("ShallowClone should shallow-copy map fields")
+	}
+
+	// Should copy slice fields
+	if !strings.Contains(codeStr, "clone.items = make([]Item") {
+		t.Error("ShallowClone should copy slice fields")
+	}
+
+	// Scalar fields should be in struct literal (direct copy)
+	// go format aligns fields, so check without exact whitespace
+	if !strings.Contains(codeStr, "phase:") || !strings.Contains(codeStr, "s.phase") {
+		t.Error("ShallowClone should copy scalar fields directly")
+	}
+
+	// Bytes fields should be in struct literal (shared)
+	if !strings.Contains(codeStr, "config:") || !strings.Contains(codeStr, "s.config") {
+		t.Error("ShallowClone should share bytes fields")
+	}
+}
+
+func TestGenerateGo_JSONMarshalUnmarshal(t *testing.T) {
+	input := `
+package game
+
+@id(1) @root(active)
+type GameState {
+    Phase   string
+    HostID  string
+    Score   int64          @optional
+    Players map[string]Player @key(ID)
+    Config  bytes          @optional
+}
+
+@id(2) @helper
+type Player {
+    ID       string
+    Name     string
+    IsCaught bool
+}
+`
+	schema, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	code, err := GenerateGo(schema)
+	if err != nil {
+		t.Fatalf("generate error: %v", err)
+	}
+
+	codeStr := string(code)
+
+	// JSON struct should exist for all types
+	if !strings.Contains(codeStr, "type gameStateJSON struct") {
+		t.Error("missing gameStateJSON struct")
+	}
+	if !strings.Contains(codeStr, "type playerJSON struct") {
+		t.Error("missing playerJSON struct")
+	}
+
+	// MarshalJSON/UnmarshalJSON for all types
+	for _, typeName := range []string{"GameState", "Player"} {
+		if !strings.Contains(codeStr, "func (t *"+typeName+") MarshalJSON()") {
+			t.Errorf("missing MarshalJSON for %s", typeName)
+		}
+		if !strings.Contains(codeStr, "func (t *"+typeName+") UnmarshalJSON(") {
+			t.Errorf("missing UnmarshalJSON for %s", typeName)
+		}
+	}
+
+	// JSON tags with camelCase
+	if !strings.Contains(codeStr, `json:"phase"`) {
+		t.Error("missing json tag for Phase → phase")
+	}
+	if !strings.Contains(codeStr, `json:"hostId"`) {
+		t.Error("missing json tag for HostID → hostId")
+	}
+	if !strings.Contains(codeStr, `json:"isCaught"`) {
+		t.Error("missing json tag for IsCaught → isCaught")
+	}
+
+	// Optional fields should have omitempty
+	if !strings.Contains(codeStr, `json:"score,omitempty"`) {
+		t.Error("optional int64 field should have omitempty")
+	}
+
+	// Bytes fields should be json.RawMessage with omitempty
+	if !strings.Contains(codeStr, `json:"config,omitempty"`) {
+		t.Error("bytes field should have omitempty")
+	}
+
+	// Map fields should have omitempty
+	if !strings.Contains(codeStr, `json:"players,omitempty"`) {
+		t.Error("map field should have omitempty")
+	}
+
+	// Root MarshalJSON should use getters for maps (thread-safe)
+	if !strings.Contains(codeStr, "players := t.Players()") {
+		t.Error("root MarshalJSON should use getter for map fields")
+	}
+
+	// Root MarshalJSON should acquire mu.RLock
+	if !strings.Contains(codeStr, "t.mu.RLock()") {
+		t.Error("root MarshalJSON should acquire mu.RLock")
+	}
+
+	// UnmarshalJSON should use New + setters
+	if !strings.Contains(codeStr, "init := NewGameState()") {
+		t.Error("UnmarshalJSON should create new instance")
+	}
+	if !strings.Contains(codeStr, "t.SetPhase(j.Phase)") {
+		t.Error("UnmarshalJSON should use setter for Phase")
+	}
+
+	// bytesToRawJSON helper should exist
+	if !strings.Contains(codeStr, "func bytesToRawJSON(") {
+		t.Error("missing bytesToRawJSON helper function")
+	}
+}
+
+func TestToCamelCase(t *testing.T) {
+	tests := []struct {
+		input, expected string
+	}{
+		{"Phase", "phase"},
+		{"ID", "id"},
+		{"HostID", "hostId"},
+		{"IsCaught", "isCaught"},
+		{"MaxTeamSlots", "maxTeamSlots"},
+		{"MassConfusionTeamID", "massConfusionTeamId"},
+		{"GameMode", "gameMode"},
+		{"Name", "name"},
+	}
+	for _, tt := range tests {
+		got := toCamelCase(tt.input)
+		if got != tt.expected {
+			t.Errorf("toCamelCase(%q) = %q, want %q", tt.input, got, tt.expected)
+		}
+	}
+}
+
 func TestGenerateGo_ZeroFieldType(t *testing.T) {
 	schema := &SchemaFile{
 		Package: "test",
