@@ -145,13 +145,15 @@ import { defineSchema, FieldType } from './decoder.js'
 {{range $t := $types}}
 export const {{toCamelCase $t.Name}}Schema = defineSchema({{$t.ID}}, '{{$t.Name}}', [
 {{- range $i, $f := $t.Fields}}
+{{- if $f.NoSync}}{{else}}
 {{- $pt := parseType $f.Type}}
 {{- if or $pt.IsArray $pt.IsMap}}
-  { name: '{{toCamelCase $f.Name}}', type: FieldType.{{jsFieldType $f.Type}}, elemType: FieldType.{{jsElemFieldType $f.Type}}{{if jsNeedsChildSchema $f.Type}}, childSchema: {{jsChildSchemaName $f.Type}}{{end}} },  // {{$i}}
+  { name: '{{toCamelCase $f.Name}}', type: FieldType.{{jsFieldType $f.Type}}, elemType: FieldType.{{jsElemFieldType $f.Type}}{{if jsNeedsChildSchema $f.Type}}, childSchema: {{jsChildSchemaName $f.Type}}{{end}} },  // {{$f.SyncIndex}}
 {{- else if not (isPrimitive $f.Type)}}
-  { name: '{{toCamelCase $f.Name}}', type: FieldType.Struct, childSchema: {{toCamelCase $f.Type}}Schema },  // {{$i}}
+  { name: '{{toCamelCase $f.Name}}', type: FieldType.Struct, childSchema: {{toCamelCase $f.Type}}Schema },  // {{$f.SyncIndex}}
 {{- else}}
-  { name: '{{toCamelCase $f.Name}}', type: FieldType.{{jsFieldType $f.Type}} },  // {{$i}}
+  { name: '{{toCamelCase $f.Name}}', type: FieldType.{{jsFieldType $f.Type}} },  // {{$f.SyncIndex}}
+{{- end}}
 {{- end}}
 {{- end}}
 ])

@@ -204,21 +204,59 @@ enc.Reset() // Reuse for next event
 
 ### schemagen - Schema Generator
 
-Generate binary encoding schemas from struct definitions:
+Generate Go structs, JS schemas, JSON marshal/unmarshal, and ShallowClone from `.schema` files:
 
 ```bash
 go install github.com/mxkacsa/statesync/cmd/schemagen@latest
 ```
 
-```go
-//go:generate schemagen -type=GameState -output=schema_gen.go
+```
+# game.schema
+package state
 
-type GameState struct {
-    Round   int64    `track:"0"`
-    Phase   string   `track:"1"`
-    Players []Player `track:"2" key:"ID"`
+@id(1) @root(active)
+type GameState {
+    Phase   string
+    Players map[string]Player @key(ID)
+    Config  bytes             @optional
+    Token   string            @noSync    // Server-only, excluded from binary encoding
+}
+
+@id(2) @helper
+type Player {
+    ID    string
+    Name  string
+    Score int64
 }
 ```
+
+```bash
+# Generate Go + JS
+schemagen -input=game.schema -go=state_gen.go -js=schemas.js
+```
+
+**Generated Go code includes:**
+- Struct definitions with private fields + getters/setters
+- Change tracking (`Mark`/`MarkAll` via `ChangeSet`)
+- `ShallowClone()` for root types (deep-copy ChangeSet, shallow-copy maps)
+- `MarshalJSON()` / `UnmarshalJSON()` with camelCase tags
+- `GetFieldValue()` + fast binary encoder
+- Schema registry with activation
+
+**Generated JS code includes:**
+- Schema definitions for the frontend binary decoder
+- Topologically sorted (dependencies first)
+- `allSchemas` array for registry
+
+**Schema annotations:**
+- `@id(N)` — unique schema ID
+- `@root(active)` / `@helper` — root vs nested type
+- `@key(Field)` — tracking key for arrays/maps
+- `@optional` — nullable field (omitempty in JSON)
+- `@noSync` — server-only field: exists in Go struct + JSON but excluded from binary encoding and JS schema
+- `@default(value)` / `@default(config:Path)` — default values
+- `@auto(uuid)` — auto-generated UUID
+- `@view(name)` / `@write(server|owner)` — visibility/write permissions
 
 ### trackgen - Tracking Code Generator
 
@@ -424,12 +462,13 @@ ts := statesync.NewTrackedState[T, A](initial, &statesync.TrackedConfig{
     Registry: registry, // Optional schema registry
 })
 
-ts.Get()                       // Current state with effects
-ts.GetBase()                   // Without effects
-ts.Update(func(s *T) {...})    // Modify
-ts.Encode()                    // Binary diff
-ts.EncodeAll()                 // Full binary state
-ts.Commit()                    // Clear change tracking
+ts.Get()                           // Current state with effects
+ts.GetBase()                       // Without effects
+ts.Update(func(s *T) {...})        // Modify (double-pointer for swap support)
+ts.UpdateInPlace(func(s T) {...})  // Modify (direct pointer, no swap)
+ts.Encode()                        // Binary diff
+ts.EncodeAll()                     // Full binary state
+ts.Commit()                        // Clear change tracking
 ```
 
 ### TrackedSession
@@ -453,6 +492,9 @@ session.SetHooks(hooks)        // Set pipeline callbacks
 // Debouncing
 session.SetDebounce(50 * time.Millisecond)
 session.SetBroadcastCallback(fn)
+session.SetTickWrapper(func(tick func()) { // Optional: wrap ticks with external lock
+    mu.Lock(); defer mu.Unlock(); tick()
+})
 session.ScheduleBroadcast()
 
 // Reconnection

@@ -69,6 +69,8 @@ type FieldDef struct {
 	Views         []string        `json:"views,omitempty"`         // Which views can see this field
 	Write         WritePermission `json:"write,omitempty"`         // Who can modify this field (server, owner, or anyone)
 	Optional      bool            `json:"optional,omitempty"`      // Pointer/nullable
+	NoSync        bool            `json:"noSync,omitempty"`        // Server-only field: exists in Go struct but excluded from binary encoding and JS schema
+	SyncIndex     int             `json:"syncIndex"`               // Index in binary encoding (-1 for @noSync fields, set by parser)
 	DefaultSource DefaultSource   `json:"defaultSource,omitempty"` // Where default comes from
 	DefaultValue  string          `json:"defaultValue,omitempty"`  // Literal value or config path (e.g., "GameConfig.Speed")
 	AutoGen       AutoGenType     `json:"autoGen,omitempty"`       // Auto-generation type (e.g., "uuid")

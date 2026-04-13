@@ -1564,3 +1564,234 @@ func TestGenerateGo_ZeroFieldType(t *testing.T) {
 		t.Log("MarkAllDirty exists (expected for Trackable interface compliance)")
 	}
 }
+
+func TestNoSyncAnnotation(t *testing.T) {
+	input := `
+package game
+
+@id(1) @root(active)
+type GameState {
+    Phase   string
+    Score   int64
+    Secret  string  @noSync
+    Token   string  @noSync
+}
+`
+	schema, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	gs := schema.Types[0]
+
+	// Check SyncIndex assignment
+	if gs.Fields[0].SyncIndex != 0 { // Phase
+		t.Errorf("Phase SyncIndex = %d, want 0", gs.Fields[0].SyncIndex)
+	}
+	if gs.Fields[1].SyncIndex != 1 { // Score
+		t.Errorf("Score SyncIndex = %d, want 1", gs.Fields[1].SyncIndex)
+	}
+	if gs.Fields[2].SyncIndex != -1 { // Secret @noSync
+		t.Errorf("Secret SyncIndex = %d, want -1", gs.Fields[2].SyncIndex)
+	}
+	if gs.Fields[3].SyncIndex != -1 { // Token @noSync
+		t.Errorf("Token SyncIndex = %d, want -1", gs.Fields[3].SyncIndex)
+	}
+
+	code, err := GenerateGo(schema)
+	if err != nil {
+		t.Fatalf("generate error: %v", err)
+	}
+	codeStr := string(code)
+
+	// @noSync fields should have getter/setter in Go struct
+	if !strings.Contains(codeStr, "func (t *GameState) Secret()") {
+		t.Error("@noSync field should have getter")
+	}
+	if !strings.Contains(codeStr, "func (t *GameState) SetSecret(") {
+		t.Error("@noSync field should have setter")
+	}
+
+	// @noSync setter should NOT call changes.Mark
+	// Find the SetSecret function and check it doesn't contain Mark
+	setSecretIdx := strings.Index(codeStr, "func (t *GameState) SetSecret(")
+	if setSecretIdx == -1 {
+		t.Fatal("SetSecret not found")
+	}
+	setSecretEnd := strings.Index(codeStr[setSecretIdx:], "\n}\n")
+	setSecretBody := codeStr[setSecretIdx : setSecretIdx+setSecretEnd]
+	if strings.Contains(setSecretBody, "changes.Mark") {
+		t.Error("@noSync setter should NOT call changes.Mark")
+	}
+
+	// @noSync fields should NOT be in schema builder
+	if strings.Contains(codeStr, `String("Secret"`) {
+		t.Error("@noSync field should NOT appear in schema builder")
+	}
+
+	// Synced fields should still be in schema builder
+	if !strings.Contains(codeStr, `String("Phase"`) {
+		t.Error("synced field Phase should be in schema builder")
+	}
+
+	// MarkAllDirty should use maxSyncIndex (1, not 3)
+	if strings.Contains(codeStr, "MarkAll(3)") {
+		t.Error("MarkAllDirty should use maxSyncIndex, not total field count")
+	}
+	if !strings.Contains(codeStr, "MarkAll(1)") {
+		t.Error("MarkAllDirty should use MarkAll(1) for 2 synced fields")
+	}
+
+	// @noSync fields should be in JSON marshal (for persistence)
+	if !strings.Contains(codeStr, `json:"secret"`) {
+		t.Error("@noSync field should appear in JSON struct")
+	}
+
+	// @noSync fields should be in ShallowClone
+	if !strings.Contains(codeStr, "secret:") && !strings.Contains(codeStr, "s.secret") {
+		t.Error("@noSync field should be in ShallowClone")
+	}
+}
+
+func TestNoSyncAnnotation_JSSchema(t *testing.T) {
+	input := `
+package game
+
+@id(1) @root(active)
+type GameState {
+    Phase   string
+    Score   int64
+    Secret  string  @noSync
+}
+`
+	schema, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	jsCode, err := GenerateJS(schema)
+	if err != nil {
+		t.Fatalf("generate error: %v", err)
+	}
+	js := string(jsCode)
+
+	// @noSync fields should NOT be in JS schema
+	if strings.Contains(js, "secret") {
+		t.Error("@noSync field should NOT appear in JS schema")
+	}
+
+	// Synced fields should be in JS schema
+	if !strings.Contains(js, "'phase'") {
+		t.Error("synced field should appear in JS schema")
+	}
+	if !strings.Contains(js, "'score'") {
+		t.Error("synced field should appear in JS schema")
+	}
+}
+
+func TestGenerateJS(t *testing.T) {
+	input := `
+package game
+
+@id(1) @root(active)
+type GameState {
+    Phase   string
+    Players map[string]Player @key(ID)
+    Items   []string
+    Config  bytes
+}
+
+@id(2) @helper
+type Player {
+    ID    string
+    Name  string
+    Score int64
+}
+`
+	schema, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	jsCode, err := GenerateJS(schema)
+	if err != nil {
+		t.Fatalf("generate error: %v", err)
+	}
+	js := string(jsCode)
+
+	// Should have import
+	if !strings.Contains(js, "import { defineSchema, FieldType } from './decoder.js'") {
+		t.Error("missing decoder import")
+	}
+
+	// Should export schemas
+	if !strings.Contains(js, "export const gameStateSchema") {
+		t.Error("missing gameStateSchema export")
+	}
+	if !strings.Contains(js, "export const playerSchema") {
+		t.Error("missing playerSchema export")
+	}
+
+	// Player schema should come before GameState (topological sort)
+	playerIdx := strings.Index(js, "playerSchema")
+	gameIdx := strings.Index(js, "gameStateSchema")
+	if playerIdx > gameIdx {
+		t.Error("Player schema should be defined before GameState (dependency order)")
+	}
+
+	// Map field with child schema
+	if !strings.Contains(js, "childSchema: playerSchema") {
+		t.Error("map field should reference child schema")
+	}
+
+	// allSchemas export
+	if !strings.Contains(js, "export const allSchemas") {
+		t.Error("missing allSchemas export")
+	}
+}
+
+func TestRootMapSliceAutoInit(t *testing.T) {
+	input := `
+package game
+
+@id(1) @root(active)
+type GameState {
+    Phase   string
+    Players map[string]Player @key(ID)
+    Items   []Item            @key(ID)
+}
+
+@id(2) @helper
+type Player {
+    ID   string
+}
+
+@id(3) @helper
+type Item {
+    ID   string
+}
+`
+	schema, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	code, err := GenerateGo(schema)
+	if err != nil {
+		t.Fatalf("generate error: %v", err)
+	}
+	codeStr := string(code)
+
+	// Root type ResetToDefaults should use make() for maps
+	if !strings.Contains(codeStr, "t.players = make(map[string]Player)") {
+		t.Error("root map field should be initialized with make() in ResetToDefaults")
+	}
+
+	// Root type ResetToDefaults should use make() for slices
+	if !strings.Contains(codeStr, "t.items = make([]Item, 0)") {
+		t.Error("root slice field should be initialized with make() in ResetToDefaults")
+	}
+
+	// Helper type should NOT auto-init maps (nil is fine)
+	// Player has no map fields so this is implicitly tested
+}

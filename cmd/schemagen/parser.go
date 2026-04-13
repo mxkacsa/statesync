@@ -218,6 +218,17 @@ func (p *Parser) parseTypeFromLine(line string, id int) (*TypeDef, error) {
 		typeDef.Fields = append(typeDef.Fields, field)
 	}
 
+	// Assign SyncIndex to each field: synced fields get sequential indices, @noSync fields get -1
+	syncIdx := 0
+	for _, f := range typeDef.Fields {
+		if f.NoSync {
+			f.SyncIndex = -1
+		} else {
+			f.SyncIndex = syncIdx
+			syncIdx++
+		}
+	}
+
 	return typeDef, nil
 }
 
@@ -318,6 +329,11 @@ func (p *Parser) parseField(line string) (*FieldDef, error) {
 
 		if ann == "@optional" {
 			field.Optional = true
+			continue
+		}
+
+		if ann == "@noSync" {
+			field.NoSync = true
 			continue
 		}
 	}

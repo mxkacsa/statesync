@@ -209,6 +209,25 @@ func GenerateGo(schema *SchemaFile) ([]byte, error) {
 		"isActiveByDefault": func(t *TypeDef) bool { return t.DefaultState == "active" },
 		"hasComplexFields":  typeHasComplexFields,
 		"needsMutex":        func(t *TypeDef) bool { return t.Role == RoleRoot },
+		"isSynced":          func(f *FieldDef) bool { return !f.NoSync },
+		"syncedFields": func(t *TypeDef) []*FieldDef {
+			var result []*FieldDef
+			for _, f := range t.Fields {
+				if !f.NoSync {
+					result = append(result, f)
+				}
+			}
+			return result
+		},
+		"maxSyncIndex": func(t *TypeDef) int {
+			max := -1
+			for _, f := range t.Fields {
+				if !f.NoSync && f.SyncIndex > max {
+					max = f.SyncIndex
+				}
+			}
+			return max
+		},
 		"toCamelCase":       toCamelCase,
 		"jsonOmitEmpty":     jsonOmitEmpty,
 		"jsonGoType":        jsonGoType,
@@ -298,7 +317,7 @@ func (t *{{$t.Name}}) ResetToDefaults() {
 	t.{{lower $f.Name}} = {{goDefaultValue $f}}
 	{{- end}}
 	{{- end}}
-	{{if gt (len $t.Fields) 0}}t.changes.MarkAll({{sub (len $t.Fields) 1}}){{end}}
+	{{$max := maxSyncIndex $t}}{{if ge $max 0}}t.changes.MarkAll({{$max}}){{end}}
 }
 
 // {{$t.Name}}Schema returns the schema for {{$t.Name}}
@@ -306,6 +325,7 @@ func {{$t.Name}}Schema() *statesync.Schema {
 	return statesync.NewSchemaBuilder("{{$t.Name}}").
 		WithID({{$t.ID}}).
 		{{- range $i, $f := $t.Fields}}
+		{{- if isSynced $f}}
 		{{- $pt := parseType $f.Type}}
 		{{- if $pt.IsArray}}
 		{{- if $f.Key}}
@@ -320,6 +340,7 @@ func {{$t.Name}}Schema() *statesync.Schema {
 		{{- if eq $ft "TypeInt8"}}Int8{{else if eq $ft "TypeInt16"}}Int16{{else if eq $ft "TypeInt32"}}Int32{{else if eq $ft "TypeInt64"}}Int64{{else if eq $ft "TypeUint8"}}Uint8{{else if eq $ft "TypeUint16"}}Uint16{{else if eq $ft "TypeUint32"}}Uint32{{else if eq $ft "TypeUint64"}}Uint64{{else if eq $ft "TypeFloat32"}}Float32{{else if eq $ft "TypeFloat64"}}Float64{{else if eq $ft "TypeString"}}String{{else if eq $ft "TypeBool"}}Bool{{else if eq $ft "TypeBytes"}}Bytes{{else}}Struct{{end}}("{{$f.Name}}"{{if eq $ft "TypeStruct"}}, {{$f.Type}}Schema(){{end}}).
 		{{- end}}
 		{{- end}}
+		{{- end}}
 		Build()
 }
 
@@ -328,7 +349,7 @@ func {{$t.Name}}Schema() *statesync.Schema {
 func (t *{{$t.Name}}) Schema() *statesync.Schema     { return t.schema }
 func (t *{{$t.Name}}) Changes() *statesync.ChangeSet { return t.changes }
 func (t *{{$t.Name}}) ClearChanges()                 { t.changes.Clear() }
-func (t *{{$t.Name}}) MarkAllDirty()                 { {{if gt (len $t.Fields) 0}}t.changes.MarkAll({{sub (len $t.Fields) 1}}){{end}} }
+func (t *{{$t.Name}}) MarkAllDirty()                 { {{$max := maxSyncIndex $t}}{{if ge $max 0}}t.changes.MarkAll({{$max}}){{end}} }
 
 func (t *{{$t.Name}}) GetFieldValue(index uint8) interface{} {
 	{{- if needsMutex $t}}
@@ -337,7 +358,8 @@ func (t *{{$t.Name}}) GetFieldValue(index uint8) interface{} {
 	{{- end}}
 	switch index {
 	{{- range $i, $f := $t.Fields}}
-	case {{$i}}:
+	{{- if isSynced $f}}
+	case {{$f.SyncIndex}}:
 		{{- $pt := parseType $f.Type}}
 		{{- if or (eq $f.Type "int") (eq $f.Type "uint")}}
 		return int64(t.{{lower $f.Name}})
@@ -345,21 +367,22 @@ func (t *{{$t.Name}}) GetFieldValue(index uint8) interface{} {
 		if t.{{lower $f.Name}} == nil {
 			return nil
 		}
-		cp{{$i}} := make({{goType $f.Type}}, len(t.{{lower $f.Name}}))
+		cp := make({{goType $f.Type}}, len(t.{{lower $f.Name}}))
 		for k, v := range t.{{lower $f.Name}} {
-			cp{{$i}}[k] = v
+			cp[k] = v
 		}
-		return cp{{$i}}
+		return cp
 		{{- else if $pt.IsArray}}
 		if t.{{lower $f.Name}} == nil {
 			return nil
 		}
-		cp{{$i}} := make({{goType $f.Type}}, len(t.{{lower $f.Name}}))
-		copy(cp{{$i}}, t.{{lower $f.Name}})
-		return cp{{$i}}
+		cp := make({{goType $f.Type}}, len(t.{{lower $f.Name}}))
+		copy(cp, t.{{lower $f.Name}})
+		return cp
 		{{- else}}
 		return t.{{lower $f.Name}}
 		{{- end}}
+	{{- end}}
 	{{- end}}
 	}
 	return nil
@@ -379,16 +402,20 @@ func (t *{{$t.Name}}) EncodeChangesTo(e *statesync.Encoder) {
 	changes := t.changes
 	count := 0
 	{{- range $i, $f := $t.Fields}}
-	if changes.IsFieldDirty({{$i}}) { count++ }
+	{{- if isSynced $f}}
+	if changes.IsFieldDirty({{$f.SyncIndex}}) { count++ }
+	{{- end}}
 	{{- end}}
 	e.WriteChangeCount(count)
 
 	// Encode each changed field directly (no interface{} boxing)
 	{{- range $i, $f := $t.Fields}}
-	if changes.IsFieldDirty({{$i}}) {
-		e.WriteFieldHeader({{$i}}, statesync.OpReplace)
+	{{- if isSynced $f}}
+	if changes.IsFieldDirty({{$f.SyncIndex}}) {
+		e.WriteFieldHeader({{$f.SyncIndex}}, statesync.OpReplace)
 		e.{{encoderMethod $f.Type}}(t.{{lower $f.Name}})
 	}
+	{{- end}}
 	{{- end}}
 }
 
@@ -398,9 +425,11 @@ func (t *{{$t.Name}}) EncodeAllTo(e *statesync.Encoder) {
 	defer t.mu.RUnlock()
 	{{- end}}
 
-	// Encode all fields directly (no interface{} boxing)
+	// Encode all synced fields directly (no interface{} boxing)
 	{{- range $i, $f := $t.Fields}}
+	{{- if isSynced $f}}
 	e.{{encoderMethod $f.Type}}(t.{{lower $f.Name}})
+	{{- end}}
 	{{- end}}
 }
 {{end}}
@@ -435,21 +464,23 @@ func (t *{{$t.Name}}) {{$f.Name}}() {{$goT}} {
 }
 
 {{if not $pt.IsArray}}{{if not $pt.IsMap}}
-// Set{{$f.Name}} sets the value and marks it as changed
+// Set{{$f.Name}} sets the value{{if isSynced $f}} and marks it as changed{{end}}
 func (t *{{$t.Name}}) Set{{$f.Name}}(v {{$goT}}) {
 	{{- if needsMutex $t}}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	{{- end}}
-	{{if and (isPrimitive $f.Type) (ne $f.Type "bytes")}}
+	{{- if not (isSynced $f)}}
+	t.{{$lower}} = v
+	{{- else if and (isPrimitive $f.Type) (ne $f.Type "bytes")}}
 	if t.{{$lower}} != v {
 		t.{{$lower}} = v
-		t.changes.Mark({{$i}}, statesync.OpReplace)
+		t.changes.Mark({{$f.SyncIndex}}, statesync.OpReplace)
 	}
-	{{else}}
+	{{- else}}
 	t.{{$lower}} = v
-	t.changes.Mark({{$i}}, statesync.OpReplace)
-	{{end}}
+	t.changes.Mark({{$f.SyncIndex}}, statesync.OpReplace)
+	{{- end}}
 }
 {{end}}{{end}}
 
@@ -461,7 +492,7 @@ func (t *{{$t.Name}}) Set{{$f.Name}}(v {{$goT}}) {
 	defer t.mu.Unlock()
 	{{- end}}
 	t.{{$lower}} = v
-	t.changes.Mark({{$i}}, statesync.OpReplace)
+	t.changes.Mark({{$f.SyncIndex}}, statesync.OpReplace)
 }
 
 // Append{{$f.Name}} adds an element to the slice
@@ -471,7 +502,7 @@ func (t *{{$t.Name}}) Append{{$f.Name}}(v {{$pt.ElemType}}) {
 	defer t.mu.Unlock()
 	{{- end}}
 	t.{{$lower}} = append(t.{{$lower}}, v)
-	arr := t.changes.GetOrCreateArray({{$i}})
+	arr := t.changes.GetOrCreateArray({{$f.SyncIndex}})
 	arr.MarkAdd(len(t.{{$lower}})-1, v)
 }
 
@@ -483,7 +514,7 @@ func (t *{{$t.Name}}) Remove{{$f.Name}}At(index int) {
 	{{- end}}
 	if index >= 0 && index < len(t.{{$lower}}) {
 		t.{{$lower}} = append(t.{{$lower}}[:index], t.{{$lower}}[index+1:]...)
-		arr := t.changes.GetOrCreateArray({{$i}})
+		arr := t.changes.GetOrCreateArray({{$f.SyncIndex}})
 		arr.MarkRemove(index)
 	}
 }
@@ -496,7 +527,7 @@ func (t *{{$t.Name}}) Update{{$f.Name}}At(index int, v {{$pt.ElemType}}) {
 	{{- end}}
 	if index >= 0 && index < len(t.{{$lower}}) {
 		t.{{$lower}}[index] = v
-		arr := t.changes.GetOrCreateArray({{$i}})
+		arr := t.changes.GetOrCreateArray({{$f.SyncIndex}})
 		arr.MarkReplace(index, v)
 	}
 }
@@ -532,7 +563,7 @@ func (t *{{$t.Name}}) Set{{$f.Name}}(v {{$goT}}) {
 	defer t.mu.Unlock()
 	{{- end}}
 	t.{{$lower}} = v
-	t.changes.Mark({{$i}}, statesync.OpReplace)
+	t.changes.Mark({{$f.SyncIndex}}, statesync.OpReplace)
 }
 
 // Set{{$f.Name}}Key sets a map key
@@ -546,7 +577,7 @@ func (t *{{$t.Name}}) Set{{$f.Name}}Key(key {{$pt.KeyType}}, v {{$pt.ElemType}})
 	}
 	_, existed := t.{{$lower}}[key]
 	t.{{$lower}}[key] = v
-	m := t.changes.GetOrCreateMap({{$i}})
+	m := t.changes.GetOrCreateMap({{$f.SyncIndex}})
 {{- if not (isPrimitive $pt.ElemType)}}
 	vp := v
 	if existed {
@@ -572,7 +603,7 @@ func (t *{{$t.Name}}) Delete{{$f.Name}}Key(key {{$pt.KeyType}}) {
 	if t.{{$lower}} != nil {
 		if _, ok := t.{{$lower}}[key]; ok {
 			delete(t.{{$lower}}, key)
-			m := t.changes.GetOrCreateMap({{$i}})
+			m := t.changes.GetOrCreateMap({{$f.SyncIndex}})
 			m.MarkRemove(key)
 		}
 	}
@@ -609,7 +640,7 @@ func (t *{{$t.Name}}) Modify{{$f.Name}}Key(key {{$pt.KeyType}}, fn func(*{{$pt.E
 	}
 	fn(&v)
 	t.{{$lower}}[key] = v
-	m := t.changes.GetOrCreateMap({{$i}})
+	m := t.changes.GetOrCreateMap({{$f.SyncIndex}})
 	vp := v
 	m.MarkReplace(key, &vp)
 	return true
