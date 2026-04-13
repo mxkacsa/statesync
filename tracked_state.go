@@ -7,12 +7,11 @@ import (
 // TrackedState manages state with automatic change tracking
 // T must implement Trackable
 type TrackedState[T Trackable, A any] struct {
-	mu        sync.RWMutex
-	current   T
-	effects   []Effect[T, A]
-	encoder   *Encoder
-	encoderMu sync.Mutex // protects encoder from concurrent access
-	registry  *SchemaRegistry
+	mu          sync.RWMutex
+	current     T
+	effects     []Effect[T, A]
+	encoderPool sync.Pool // pool of *Encoder instances (eliminates encoder lock contention)
+	registry    *SchemaRegistry
 }
 
 // TrackedConfig configuration for TrackedState
@@ -30,12 +29,15 @@ func NewTrackedState[T Trackable, A any](initial T, cfg *TrackedConfig) *Tracked
 		registry.Register(initial.Schema())
 	}
 
-	return &TrackedState[T, A]{
+	ts := &TrackedState[T, A]{
 		current:  initial,
 		effects:  make([]Effect[T, A], 0),
-		encoder:  NewEncoder(registry),
 		registry: registry,
 	}
+	ts.encoderPool.New = func() interface{} {
+		return NewEncoder(registry)
+	}
+	return ts
 }
 
 // Get returns the current state with all effects applied.
@@ -109,9 +111,7 @@ func (s *TrackedState[T, A]) Encode() []byte {
 	if !state.Changes().HasChanges() {
 		return nil
 	}
-	s.encoderMu.Lock()
-	defer s.encoderMu.Unlock()
-	return s.encoder.Encode(state)
+	return s.poolEncode(state)
 }
 
 // EncodeAll returns the full state as binary (for initial sync)
@@ -120,9 +120,7 @@ func (s *TrackedState[T, A]) EncodeAll() []byte {
 	defer s.mu.RUnlock()
 
 	state := s.withEffects(s.current)
-	s.encoderMu.Lock()
-	defer s.encoderMu.Unlock()
-	return s.encoder.EncodeAll(state)
+	return s.poolEncodeAll(state)
 }
 
 // EncodeWithFilter encodes with a filter function
@@ -137,9 +135,7 @@ func (s *TrackedState[T, A]) EncodeWithFilter(filter func(T) T) []byte {
 	if isNilTrackable(state) || !state.Changes().HasChanges() {
 		return nil
 	}
-	s.encoderMu.Lock()
-	defer s.encoderMu.Unlock()
-	return s.encoder.Encode(state)
+	return s.poolEncode(state)
 }
 
 // EncodeAllWithFilter encodes full state with filter
@@ -154,27 +150,33 @@ func (s *TrackedState[T, A]) EncodeAllWithFilter(filter func(T) T) []byte {
 	if isNilTrackable(state) {
 		return nil
 	}
-	s.encoderMu.Lock()
-	defer s.encoderMu.Unlock()
-	return s.encoder.EncodeAll(state)
+	return s.poolEncodeAll(state)
 }
 
-// lockedEncode encodes changes for a pre-resolved state.
-// The caller must have already applied effects/filters on the state.
-// This acquires only the encoder mutex, not the state mutex.
+// poolEncode gets an encoder from the pool, encodes changes, and returns it.
+func (s *TrackedState[T, A]) poolEncode(state Trackable) []byte {
+	enc := s.encoderPool.Get().(*Encoder)
+	data := enc.Encode(state)
+	s.encoderPool.Put(enc)
+	return data
+}
+
+// poolEncodeAll gets an encoder from the pool, encodes full state, and returns it.
+func (s *TrackedState[T, A]) poolEncodeAll(state Trackable) []byte {
+	enc := s.encoderPool.Get().(*Encoder)
+	data := enc.EncodeAll(state)
+	s.encoderPool.Put(enc)
+	return data
+}
+
+// lockedEncode encodes changes for a pre-resolved state using the encoder pool.
 func (s *TrackedState[T, A]) lockedEncode(state Trackable) []byte {
-	s.encoderMu.Lock()
-	defer s.encoderMu.Unlock()
-	return s.encoder.Encode(state)
+	return s.poolEncode(state)
 }
 
-// lockedEncodeAll encodes full state for a pre-resolved state.
-// The caller must have already applied effects/filters on the state.
-// This acquires only the encoder mutex, not the state mutex.
+// lockedEncodeAll encodes full state for a pre-resolved state using the encoder pool.
 func (s *TrackedState[T, A]) lockedEncodeAll(state Trackable) []byte {
-	s.encoderMu.Lock()
-	defer s.encoderMu.Unlock()
-	return s.encoder.EncodeAll(state)
+	return s.poolEncodeAll(state)
 }
 
 // Commit clears all tracked changes

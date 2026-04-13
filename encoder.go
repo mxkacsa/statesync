@@ -51,6 +51,13 @@ func (e *Encoder) Bytes() []byte {
 	return result
 }
 
+// UnsafeBytes returns the encoded bytes without copying.
+// The returned slice is only valid until the next Encode/EncodeAll/Reset call.
+// Use this in hot paths where the caller immediately sends the bytes and doesn't retain them.
+func (e *Encoder) UnsafeBytes() []byte {
+	return e.buf[:e.pos]
+}
+
 // grow ensures buffer has capacity for n more bytes
 func (e *Encoder) grow(n int) {
 	needed := e.pos + n
