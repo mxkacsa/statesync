@@ -170,12 +170,37 @@ func jsonOmitEmpty(f *FieldDef) bool {
 }
 
 // jsonGoType returns the Go type to use in the JSON struct
-// bytes → json.RawMessage, everything else → same as goType
+// bytes → json.RawMessage, map[K]StructT → map[K]*StructT, everything else → same as goType.
+// Rationale: Go's encoding/json cannot call pointer-receiver MarshalJSON on
+// non-addressable map values, so a field typed as map[K]StructT would serialize
+// every entry as "{}". Using pointer values makes each entry addressable so the
+// generated MarshalJSON runs per entry.
 func jsonGoType(f *FieldDef) string {
 	if f.Type == "bytes" || f.Type == "[]byte" {
 		return "json.RawMessage"
 	}
+	if mapValueIsStruct(f) {
+		pt := ParseType(f.Type)
+		return "map[" + GoType(pt.KeyType) + "]*" + GoType(pt.ElemType)
+	}
 	return GoType(f.Type)
+}
+
+// mapValueIsStruct reports whether a field is a map whose value type is a
+// non-primitive, non-pointer struct — the shape that triggers the
+// pointer-receiver MarshalJSON bug described on jsonGoType.
+func mapValueIsStruct(f *FieldDef) bool {
+	pt := ParseType(f.Type)
+	if !pt.IsMap {
+		return false
+	}
+	if IsPrimitive(pt.ElemType) {
+		return false
+	}
+	if len(pt.ElemType) > 0 && pt.ElemType[0] == '*' {
+		return false
+	}
+	return true
 }
 
 // getRootSchemas returns only root schemas
@@ -204,6 +229,7 @@ func GenerateGo(schema *SchemaFile) ([]byte, error) {
 		"goZeroValue":       goZeroValue,
 		"hasConfigDefaults": hasConfigDefaults,
 		"hasAutoGenUUID":    hasAutoGenUUID,
+		"mapValueIsStruct":  mapValueIsStruct,
 		"getRootSchemas":    getRootSchemas,
 		"isRoot":            func(t *TypeDef) bool { return t.Role == RoleRoot },
 		"isActiveByDefault": func(t *TypeDef) bool { return t.DefaultState == "active" },
@@ -275,6 +301,38 @@ func bytesToRawJSON(b []byte) json.RawMessage {
 		return nil
 	}
 	return json.RawMessage(b)
+}
+
+// mapValuesToPtr converts a map[K]V to map[K]*V so Go's encoding/json can
+// call pointer-receiver MarshalJSON on each entry (map values are not
+// addressable, so value-typed entries would serialize as "{}").
+func mapValuesToPtr[K comparable, V any](m map[K]V) map[K]*V {
+	if m == nil {
+		return nil
+	}
+	out := make(map[K]*V, len(m))
+	for k, v := range m {
+		vc := v
+		out[k] = &vc
+	}
+	return out
+}
+
+// mapValuesFromPtr is the inverse of mapValuesToPtr, used during unmarshal.
+func mapValuesFromPtr[K comparable, V any](m map[K]*V) map[K]V {
+	if m == nil {
+		return nil
+	}
+	out := make(map[K]V, len(m))
+	for k, v := range m {
+		if v != nil {
+			out[k] = *v
+		} else {
+			var zero V
+			out[k] = zero
+		}
+	}
+	return out
 }
 
 {{range $t := .Types}}
@@ -724,10 +782,18 @@ func (t *{{$t.Name}}) MarshalJSON() ([]byte, error) {
 		{{- range $i, $f := $t.Fields}}
 		{{- $pt := parseType $f.Type}}
 		{{- if or $pt.IsMap $pt.IsArray}}
+		{{- if mapValueIsStruct $f}}
+		{{- if needsMutex $t}}
+		{{$f.Name}}: mapValuesToPtr({{lower $f.Name}}),
+		{{- else}}
+		{{$f.Name}}: mapValuesToPtr(t.{{lower $f.Name}}),
+		{{- end}}
+		{{- else}}
 		{{- if needsMutex $t}}
 		{{$f.Name}}: {{lower $f.Name}},
 		{{- else}}
 		{{$f.Name}}: t.{{lower $f.Name}},
+		{{- end}}
 		{{- end}}
 		{{- else if or (eq $f.Type "bytes") (eq $f.Type "[]byte")}}
 		{{$f.Name}}: bytesToRawJSON(t.{{lower $f.Name}}),
@@ -748,9 +814,15 @@ func (t *{{$t.Name}}) UnmarshalJSON(data []byte) error {
 	{{- range $i, $f := $t.Fields}}
 	{{- $pt := parseType $f.Type}}
 	{{- if or $pt.IsMap $pt.IsArray}}
+	{{- if mapValueIsStruct $f}}
+	if j.{{$f.Name}} != nil {
+		t.Set{{$f.Name}}(mapValuesFromPtr(j.{{$f.Name}}))
+	}
+	{{- else}}
 	if j.{{$f.Name}} != nil {
 		t.Set{{$f.Name}}(j.{{$f.Name}})
 	}
+	{{- end}}
 	{{- else if or (eq $f.Type "bytes") (eq $f.Type "[]byte")}}
 	if j.{{$f.Name}} != nil {
 		t.Set{{$f.Name}}([]byte(j.{{$f.Name}}))
